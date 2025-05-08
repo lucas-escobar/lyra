@@ -1,0 +1,22 @@
+
+# Maximum width of a line before it gets wrapped
+max_width = 80
+
+# Put each function parameter on its own line if the signature is long
+fn_args_layout = "Vertical"
+
+# Put where clauses on a separate line if needed
+where_single_line = false
+
+# Break long generic bounds onto new lines
+wrap_comments = true
+format_code_in_doc_comments = true
+
+# Break function return types onto their own line if too long
+fn_return_indent = "WithArgs"
+
+# Better alignment for chains like method calls or field accesses
+chain_width = 60
+
+# Try harder to fit generics/types nicely
+struct_lit_width = 18
