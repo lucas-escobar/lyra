@@ -187,12 +187,12 @@ mod music {
 
         pub fn add_measure<F>(
             &mut self,
-            number: usize,
             attributes: Option<Attributes>,
             f: F,
         ) where
             F: FnOnce(&mut Measure),
         {
+            let number = self.measures.len() + 1;
             let mut measure = Measure::new(number, attributes);
             f(&mut measure);
             self.measures.push(measure);
@@ -478,11 +478,52 @@ mod music {
             Ok(())
         }
 
+        /// The most generalized way to append to a measure. Other functions like
+        /// add_metronome, add_note and so on use this fn internally.
         pub fn add_item(
             &mut self,
             item: MeasureItem,
         ) {
             self.items.push(item);
+        }
+
+        // TODO consider if the user can add a staff distinction or placement.
+        // This fn is intended to prioritize convenience over customizability.
+        // Add to beat_unit type safety to allow for dotted units and more clarity
+        // to the fn user.
+        pub fn add_metronome(
+            &mut self,
+            beat_unit: &str,
+            per_minute: u32,
+        ) {
+            self.add_item(MeasureItem::Direction(Direction {
+                kind: DirectionType::Metronome {
+                    beat_unit: beat_unit.to_string(),
+                    per_minute,
+                },
+                placement: Some("above".to_string()),
+                staff: None,
+            }))
+        }
+
+        pub fn add_dynamics(
+            &mut self,
+            dynamics: &str,
+        ) {
+            self.add_item(MeasureItem::Direction(Direction {
+                kind: DirectionType::Dynamics(Dynamics::from_str(dynamics)),
+                placement: Some("below".to_string()),
+                staff: None,
+            }));
+        }
+
+        pub fn add_note(
+            &mut self,
+            note_str: &str,
+        ) {
+            self.add_item(MeasureItem::Note(Note::new(
+                note_str.parse().unwrap(),
+            )));
         }
 
         pub fn add_chord(
@@ -602,6 +643,20 @@ mod music {
                 Dynamics::F => "f",
                 Dynamics::FF => "ff",
                 Dynamics::FFF => "fff",
+            }
+        }
+
+        pub fn from_str(value: &str) -> Dynamics {
+            match value {
+                "ppp" => Dynamics::PPP,
+                "pp" => Dynamics::PP,
+                "p" => Dynamics::P,
+                "mp" => Dynamics::MP,
+                "mf" => Dynamics::MF,
+                "f" => Dynamics::F,
+                "ff" => Dynamics::FF,
+                "fff" => Dynamics::FFF,
+                _ => panic!("Unsupported dynamics string value"),
             }
         }
 
@@ -782,6 +837,36 @@ mod music {
         }
     }
 
+    impl std::str::FromStr for NoteOptions {
+        type Err = String;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() != 2 {
+                return Err("Expected format like C#4:h.".to_string());
+            }
+
+            let pitch = parts[0].parse::<Pitch>()?;
+
+            // Parse duration and dots
+            let mut chars = parts[1].chars();
+            let type_char = chars.next().ok_or("Missing note type")?;
+            let kind = NoteType::from_char(type_char);
+            let dot_count = chars.filter(|&c| c == '.').count();
+
+            Ok(NoteOptions {
+                pitch: Some(pitch),
+                kind,
+                dots: if dot_count > 0 {
+                    Some(dot_count as u8)
+                } else {
+                    None
+                },
+                ..NoteOptions::default()
+            })
+        }
+    }
+
     impl Note {
         pub fn new(opt: NoteOptions) -> Self {
             Self {
@@ -916,6 +1001,18 @@ mod music {
                     / tm.actual_note_beats as u32
             } else {
                 dotted
+            }
+        }
+
+        fn from_char(c: char) -> Self {
+            match c {
+                'w' => NoteType::Whole,
+                'h' => NoteType::Half,
+                'q' => NoteType::Quarter,
+                'e' => NoteType::Eighth,
+                's' => NoteType::Sixteenth,
+                't' => NoteType::ThirtySecond,
+                _ => panic!("Unexpected char found for NoteType parsing"),
             }
         }
     }
@@ -1094,6 +1191,47 @@ mod music {
             writer.text_element("octave", &self.octave.to_string())?;
             writer.close_tag("pitch")?;
             Ok(())
+        }
+    }
+
+    // TODO currently does not support negative octaves
+    impl std::str::FromStr for Pitch {
+        type Err = String;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            if s.len() < 2 {
+                return Err("String too short".into());
+            }
+
+            let chars: Vec<char> = s.chars().collect();
+
+            // TODO this might be a reimplementation of a naturaltone fn
+            let step = match chars[0].to_ascii_uppercase() {
+                'C' => NaturalTone::C,
+                'D' => NaturalTone::D,
+                'E' => NaturalTone::E,
+                'F' => NaturalTone::F,
+                'G' => NaturalTone::G,
+                'A' => NaturalTone::A,
+                'B' => NaturalTone::B,
+                _ => return Err("Invalid step".into()),
+            };
+
+            // If the second char is alter, octave value is third char
+            let (alter, octave_start) = match chars.get(1) {
+                Some('#') => (Some(1), 2),
+                Some('b') => (Some(-1), 2),
+                _ => (None, 1),
+            };
+
+            let octave: i8 =
+                s[octave_start..].parse().map_err(|_| "Invalid octave")?;
+
+            Ok(Pitch {
+                step,
+                alter,
+                octave,
+            })
         }
     }
 
@@ -1349,279 +1487,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             divisions,
         });
 
-        p.add_measure(1, Some(attr), |m| {
-            m.add_item(MeasureItem::Direction(Direction {
-                kind: DirectionType::Metronome {
-                    beat_unit: "quarter".to_string(),
-                    per_minute: 150,
-                },
-                placement: Some("above".to_string()),
-                staff: None,
-            }));
-            m.add_item(MeasureItem::Direction(Direction {
-                kind: DirectionType::Dynamics(Dynamics::MF),
-                placement: Some("below".to_string()),
-                staff: None,
-            }));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::C,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::C,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(Some(attr), |m| {
+            m.add_metronome("quarter", 150);
+            m.add_dynamics("mf");
+            m.add_note("C#2:h.");
+            m.add_note("C#2:h.");
         });
 
-        p.add_measure(2, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: None,
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: None,
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(None, |m| {
+            m.add_note("F2:h.");
+            m.add_note("F2:h.");
         });
 
-        p.add_measure(3, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-        });
-        p.add_measure(4, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::D,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::D,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(None, |m| {
+            m.add_note("F#2:h.");
+            m.add_note("F#2:h.");
         });
 
-        p.add_measure(5, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::D,
-                    octave: 2,
-                    alter: None,
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::D,
-                    octave: 2,
-                    alter: None,
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(None, |m| {
+            m.add_note("D#2:h.");
+            m.add_note("D#2:h.");
         });
 
-        p.add_measure(6, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: None,
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: None,
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(None, |m| {
+            m.add_note("D2:h.");
+            m.add_note("D2:h.");
         });
 
-        p.add_measure(7, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(None, |m| {
+            m.add_note("F2:h.");
+            m.add_note("F2:h.");
         });
 
-        p.add_measure(8, None, |m| {
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::C,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
-            m.add_item(MeasureItem::Note(Note::new(NoteOptions {
-                pitch: Some(Pitch {
-                    step: NaturalTone::F,
-                    octave: 2,
-                    alter: Some(1),
-                }),
-                kind: NoteType::Half,
-                dots: Some(1),
-                ..NoteOptions::default()
-            })));
+        p.add_measure(None, |m| {
+            m.add_note("F#2:h.");
+            m.add_note("F#2:h.");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("C#2:h.");
+            m.add_note("C#2:h.");
         });
     })?;
-
-    //score.add_part("P2", "Piano", |p| {
-    //    let attr = Attributes::new(
-    //        "C",
-    //        Mode::Major,
-    //        TimeSignature {
-    //            numerator: 4,
-    //            denominator: 4,
-    //        },
-    //        vec![Clef::Treble, Clef::Bass],
-    //        divisions,
-    //    );
-
-    //    p.add_measure(1, Some(attr), |m| {
-    //        //m.add_item(MeasureItem::Direction(Direction {
-    //        //    kind: DirectionType::Metronome {
-    //        //        beat_unit: "quarter".to_string(),
-    //        //        per_minute: 120,
-    //        //    },
-    //        //    placement: Some("above".to_string()),
-    //        //    staff: Some(1),
-    //        //}));
-    //        //m.add_item(MeasureItem::Direction(Direction {
-    //        //    kind: DirectionType::Words("Words".to_string()),
-    //        //    placement: Some("above".to_string()),
-    //        //    staff: Some(1),
-    //        //}));
-    //        //m.add_item(MeasureItem::Direction(Direction {
-    //        //    kind: DirectionType::Dynamics(Dynamics::MF),
-    //        //    placement: Some("below".to_string()),
-    //        //    staff: Some(2),
-    //        //}));
-    //        m.add_item(MeasureItem::Note(Note::new(
-    //            Some(Pitch {
-    //                octave: 4,
-    //                step: NaturalTone::C,
-    //                alter: None,
-    //            }),
-    //            false,
-    //            NoteType::Quarter,
-    //            divisions,
-    //            Some(1),
-    //            Some(1),
-    //        )));
-    //        m.add_item(MeasureItem::Backup(Backup::from_note_types(
-    //            &[NoteType::Quarter],
-    //            divisions,
-    //        )));
-    //        m.add_item(MeasureItem::Note(Note::new(
-    //            Some(Pitch {
-    //                octave: 2,
-    //                step: NaturalTone::C,
-    //                alter: None,
-    //            }),
-    //            false,
-    //            NoteType::Quarter,
-    //            divisions,
-    //            Some(2),
-    //            Some(2),
-    //        )));
-    //        m.add_chord(
-    //            Chord::new(
-    //                Pitch {
-    //                    step: NaturalTone::C,
-    //                    octave: 2,
-    //                    alter: None,
-    //                },
-    //                ChordQuality::Major,
-    //                None,
-    //            ),
-    //            NoteType::Quarter,
-    //            divisions,
-    //            Some(2),
-    //            Some(2),
-    //        );
-    //    });
-    //})?;
 
     let output_path = Path::new("output/music_score.xml");
     if let Some(parent) = output_path.parent() {
