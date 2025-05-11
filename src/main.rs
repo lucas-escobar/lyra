@@ -44,11 +44,28 @@ mod music {
             }
         }
 
+        pub fn finalize(&mut self) {
+            let max_measures = self
+                .parts
+                .iter()
+                .map(|p| p.measures.len())
+                .max()
+                .unwrap_or(0);
+            for part in &mut self.parts {
+                let missing = max_measures - part.measures.len();
+                for _ in 0..missing {
+                    part.add_empty_measure();
+                }
+            }
+        }
         // Write as MusicXML.
         pub fn write_to<W: std::io::Write>(
-            &self,
+            &mut self,
             writer: &mut W,
         ) -> std::io::Result<()> {
+            // Prepare the score to be used
+            self.finalize();
+
             let mut w = xml::Writer::new(writer);
 
             w.raw(r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
@@ -196,6 +213,40 @@ mod music {
             let mut measure = Measure::new(number, attributes);
             f(&mut measure);
             self.measures.push(measure);
+        }
+
+        pub fn add_empty_measure(&mut self) {
+            let attrs = self.get_current_attr().expect(
+                "Cannot add empty measure: no previous attributes found",
+            );
+
+            // Calculate ticks for full measure duration
+            let beat_unit_ratio = 4.0 / attrs.time_beat_type as f32;
+            let beat_ticks = (attrs.divisions as f32 * beat_unit_ratio) as u32;
+            let total_divisions = attrs.time_beats as u32 * beat_ticks;
+
+            let rest = Note::new(NoteOptions {
+                pitch: None,
+                kind: NoteType::Whole, // not used
+                is_measure_rest: true,
+                duration_override: Some(total_divisions),
+                ..NoteOptions::default()
+            });
+
+            let number = self.measures.len() + 1;
+            let mut measure = Measure::new(number, None);
+            measure.add_item(MeasureItem::Note(rest));
+            self.measures.push(measure);
+        }
+
+        // Returns most recent attributes
+        pub fn get_current_attr(&self) -> Option<&Attributes> {
+            for measure in self.measures.iter().rev() {
+                if let Some(attrs) = &measure.attributes {
+                    return Some(attrs);
+                }
+            }
+            None
         }
     }
 
@@ -807,6 +858,7 @@ mod music {
         time_mod: Option<TimeModification>,
         notations: Option<Notations>,
         dots: Option<u8>,
+        is_measure_rest: bool,
     }
 
     pub struct NoteOptions {
@@ -819,6 +871,10 @@ mod music {
         pub time_mod: Option<TimeModification>,
         pub notations: Option<Notations>,
         pub dots: Option<u8>,
+        pub is_measure_rest: bool,
+
+        // TODO this is to handle the case of measure rests
+        pub duration_override: Option<u32>,
     }
 
     impl Default for NoteOptions {
@@ -833,6 +889,8 @@ mod music {
                 time_mod: None,
                 notations: None,
                 dots: None,
+                is_measure_rest: false,
+                duration_override: None,
             }
         }
     }
@@ -869,20 +927,41 @@ mod music {
 
     impl Note {
         pub fn new(opt: NoteOptions) -> Self {
+            // Measure rests should ignore the normal duration calculation.
+            // Measure rests will have a duration value that fills the whole
+            // measure.
+
+            let mut duration = 0;
+            if opt.is_measure_rest {
+                if let Some(d) = opt.duration_override {
+                    duration = d;
+                } else {
+                    panic!("Duration override must be used for measure rests");
+                }
+            } else {
+                duration = opt.kind.to_duration(
+                    opt.divisions,
+                    opt.dots,
+                    opt.time_mod.as_ref(),
+                );
+            }
+
             Self {
                 kind: opt.kind.clone(),
                 pitch: opt.pitch,
                 is_chord: opt.is_chord,
-                duration: opt.kind.to_duration(
-                    opt.divisions,
-                    opt.dots,
-                    opt.time_mod.as_ref(),
-                ),
+                duration,
+                //duration: opt.kind.to_duration(
+                //    opt.divisions,
+                //    opt.dots,
+                //    opt.time_mod.as_ref(),
+                //),
                 staff: opt.staff,
                 voice: opt.voice,
                 time_mod: opt.time_mod,
                 notations: opt.notations,
                 dots: opt.dots,
+                is_measure_rest: opt.is_measure_rest,
             }
         }
 
@@ -901,10 +980,19 @@ mod music {
             if let Some(pitch) = &self.pitch {
                 pitch.write_to(writer)?;
             } else {
-                writer.self_closing_tag("rest", None)?;
+                let rest_attrs = if self.is_measure_rest {
+                    Some(xml::Attributes::new(vec![("measure", "yes")]))
+                } else {
+                    None
+                };
+                writer.self_closing_tag("rest", rest_attrs)?;
             }
             writer.text_element("duration", &self.duration.to_string())?;
-            writer.text_element("type", &self.kind.to_string())?;
+
+            if !self.is_measure_rest {
+                writer.text_element("type", &self.kind.to_string())?;
+            }
+
             if let Some(staff) = self.staff {
                 writer.text_element("staff", &staff.to_string())?;
             }
@@ -1477,7 +1565,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     score.add_part("P1", "Bass", |p| {
         let attr = Attributes::new(AttributesOptions {
-            key_name: "C#".to_string(),
+            key_name: "C#".into(),
             key_mode: Mode::Major,
             time_sig: TimeSignature {
                 numerator: 12,
@@ -1527,6 +1615,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p.add_measure(None, |m| {
             m.add_note("C#2:h.");
             m.add_note("C#2:h.");
+        });
+    })?;
+
+    score.add_part("P2", "Pad", |p| {
+        let attr = Attributes::new(AttributesOptions {
+            key_name: "C#".into(),
+            key_mode: Mode::Major,
+            time_sig: TimeSignature {
+                numerator: 12,
+                denominator: 8,
+            },
+            clefs: vec![Clef::Treble],
+            divisions,
+        });
+
+        p.add_measure(Some(attr), |m| {
+            m.add_note("C#4:h.");
+            m.add_note("C#4:h.");
         });
     })?;
 
