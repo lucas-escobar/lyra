@@ -7,10 +7,7 @@ impl<'a> Attributes<'a> {
         Self(pairs)
     }
 
-    pub fn write_to<W: Write>(
-        &self,
-        writer: &mut W,
-    ) -> std::io::Result<()> {
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         for (k, v) in &self.0 {
             write!(writer, " {}=\"{}\"", k, v)?;
         }
@@ -34,11 +31,7 @@ pub struct Writer<W: Write> {
 
 impl<W: Write> Writer<W> {
     pub fn new(writer: W) -> Self {
-        Self {
-            writer,
-            indent_level: 0,
-            indent_spaces: 2,
-        }
+        Self { writer, indent_level: 0, indent_spaces: 2 }
     }
 
     fn write_indent(&mut self) -> std::io::Result<()> {
@@ -64,10 +57,7 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    pub fn close_tag(
-        &mut self,
-        tag: &str,
-    ) -> std::io::Result<()> {
+    pub fn close_tag(&mut self, tag: &str) -> std::io::Result<()> {
         self.indent_level -= 1;
         self.write_indent()?;
         writeln!(self.writer, "</{}>", tag)
@@ -105,10 +95,7 @@ impl<W: Write> Writer<W> {
         writeln!(self.writer, "<{tag}{}>{text}</{tag}>", attrs.to_string())
     }
 
-    pub fn raw(
-        &mut self,
-        s: &str,
-    ) -> std::io::Result<()> {
+    pub fn raw(&mut self, s: &str) -> std::io::Result<()> {
         writeln!(self.writer, "{}", s)
     }
 }

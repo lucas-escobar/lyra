@@ -34,12 +34,8 @@ impl Score {
     }
 
     pub fn finalize(&mut self) {
-        let max_measures = self
-            .parts
-            .iter()
-            .map(|p| p.measures.len())
-            .max()
-            .unwrap_or(0);
+        let max_measures =
+            self.parts.iter().map(|p| p.measures.len()).max().unwrap_or(0);
         for part in &mut self.parts {
             let missing = max_measures - part.measures.len();
             for _ in 0..missing {
@@ -202,11 +198,8 @@ impl Part {
         Ok(())
     }
 
-    pub fn add_measure<F>(
-        &mut self,
-        attributes: Option<Attributes>,
-        f: F,
-    ) where
+    pub fn add_measure<F>(&mut self, attributes: Option<Attributes>, f: F)
+    where
         F: FnOnce(&mut Measure),
     {
         let number = self.measures.len() + 1;
@@ -362,10 +355,7 @@ impl Default for AttributesOptions {
         Self {
             key_name: "C".to_string(),
             key_mode: Mode::Major,
-            time_sig: TimeSignature {
-                numerator: 4,
-                denominator: 4,
-            },
+            time_sig: TimeSignature { numerator: 4, denominator: 4 },
             clefs: vec![Clef::Treble],
             divisions: 480,
         }
@@ -445,21 +435,12 @@ pub struct Backup {
 }
 
 impl Backup {
-    pub fn from_note_types(
-        kinds: &[NoteType],
-        divisions: u32,
-    ) -> Self {
+    pub fn from_note_types(kinds: &[NoteType], divisions: u32) -> Self {
         // TODO note duration cannot currently include dots or time mods
         // as seen in the to_duration() fn
-        let duration = kinds
-            .iter()
-            .map(|t| t.to_duration(divisions, None, None))
-            .sum();
-        Self {
-            duration,
-            footnote: None,
-            level: None,
-        }
+        let duration =
+            kinds.iter().map(|t| t.to_duration(divisions, None, None)).sum();
+        Self { duration, footnote: None, level: None }
     }
 
     pub fn write_to<W: std::io::Write>(
@@ -487,15 +468,8 @@ pub struct Measure {
 }
 
 impl Measure {
-    pub fn new(
-        number: usize,
-        attributes: Option<Attributes>,
-    ) -> Self {
-        Self {
-            number,
-            items: Vec::new(),
-            attributes,
-        }
+    pub fn new(number: usize, attributes: Option<Attributes>) -> Self {
+        Self { number, items: Vec::new(), attributes }
     }
 
     pub fn write_to<W: std::io::Write>(
@@ -530,10 +504,7 @@ impl Measure {
 
     /// The most generalized way to append to a measure. Other functions like
     /// add_metronome, add_note and so on use this fn internally.
-    pub fn add_item(
-        &mut self,
-        item: MeasureItem,
-    ) {
+    pub fn add_item(&mut self, item: MeasureItem) {
         self.items.push(item);
     }
 
@@ -541,11 +512,7 @@ impl Measure {
     // This fn is intended to prioritize convenience over customizability.
     // Add to beat_unit type safety to allow for dotted units and more clarity
     // to the fn user.
-    pub fn add_metronome(
-        &mut self,
-        beat_unit: &str,
-        per_minute: u32,
-    ) {
+    pub fn add_metronome(&mut self, beat_unit: &str, per_minute: u32) {
         self.add_item(MeasureItem::Direction(Direction {
             kind: DirectionType::Metronome {
                 beat_unit: beat_unit.to_string(),
@@ -556,10 +523,7 @@ impl Measure {
         }))
     }
 
-    pub fn add_dynamics(
-        &mut self,
-        dynamics: &str,
-    ) {
+    pub fn add_dynamics(&mut self, dynamics: &str) {
         self.add_item(MeasureItem::Direction(Direction {
             kind: DirectionType::Dynamics(Dynamics::from_str(dynamics)),
             placement: Some("below".to_string()),
@@ -567,10 +531,7 @@ impl Measure {
         }));
     }
 
-    pub fn add_note(
-        &mut self,
-        note_str: &str,
-    ) {
+    pub fn add_note(&mut self, note_str: &str) {
         let parts: Vec<&str> = note_str.split(':').collect();
         assert!(
             parts.len() == 2,
@@ -579,10 +540,7 @@ impl Measure {
         self.add_item(MeasureItem::Note(Note::new(note_str.parse().unwrap())));
     }
 
-    pub fn add_rest(
-        &mut self,
-        rest: &str,
-    ) {
+    pub fn add_rest(&mut self, rest: &str) {
         let parts: Vec<&str> = rest.split(':').collect();
         assert!(
             parts.len() == 1,
@@ -734,10 +692,7 @@ impl Direction {
             DirectionType::Words(text) => {
                 writer.text_element("words", text)?;
             }
-            DirectionType::Metronome {
-                beat_unit,
-                per_minute,
-            } => {
+            DirectionType::Metronome { beat_unit, per_minute } => {
                 writer.open_tag("metronome", None)?;
                 writer.text_element("beat-unit", beat_unit)?;
                 writer.text_element("per-minute", &per_minute.to_string())?;
@@ -1011,11 +966,7 @@ impl std::str::FromStr for NoteOptions {
         Ok(NoteOptions {
             pitch: pitch_opt,
             kind,
-            dots: if dot_count > 0 {
-                Some(dot_count as u8)
-            } else {
-                None
-            },
+            dots: if dot_count > 0 { Some(dot_count as u8) } else { None },
             ..NoteOptions::default()
         })
     }
@@ -1222,10 +1173,7 @@ impl Pitch {
     }
 
     /// From a semitone value relative to C-1 (MIDI value of 0)
-    pub fn from_semitone(
-        semitone: u8,
-        prefer_flat: bool,
-    ) -> Self {
+    pub fn from_semitone(semitone: u8, prefer_flat: bool) -> Self {
         assert!(semitone <= 127, "semitone out of MIDI range");
 
         let octave = (semitone / 12) as i8 - 1;
@@ -1233,130 +1181,34 @@ impl Pitch {
 
         if prefer_flat {
             match semitone_in_octave {
-                0 => Pitch {
-                    step: NaturalTone::C,
-                    octave,
-                    alter: None,
-                },
-                1 => Pitch {
-                    step: NaturalTone::D,
-                    octave,
-                    alter: Some(-1),
-                }, // D♭
-                2 => Pitch {
-                    step: NaturalTone::D,
-                    octave,
-                    alter: None,
-                },
-                3 => Pitch {
-                    step: NaturalTone::E,
-                    octave,
-                    alter: Some(-1),
-                }, // E♭
-                4 => Pitch {
-                    step: NaturalTone::E,
-                    octave,
-                    alter: None,
-                },
-                5 => Pitch {
-                    step: NaturalTone::F,
-                    octave,
-                    alter: None,
-                },
-                6 => Pitch {
-                    step: NaturalTone::G,
-                    octave,
-                    alter: Some(-1),
-                }, // G♭
-                7 => Pitch {
-                    step: NaturalTone::G,
-                    octave,
-                    alter: None,
-                },
-                8 => Pitch {
-                    step: NaturalTone::A,
-                    octave,
-                    alter: Some(-1),
-                }, // A♭
-                9 => Pitch {
-                    step: NaturalTone::A,
-                    octave,
-                    alter: None,
-                },
-                10 => Pitch {
-                    step: NaturalTone::B,
-                    octave,
-                    alter: Some(-1),
-                }, // B♭
-                11 => Pitch {
-                    step: NaturalTone::B,
-                    octave,
-                    alter: None,
-                },
+                0 => Pitch { step: NaturalTone::C, octave, alter: None },
+                1 => Pitch { step: NaturalTone::D, octave, alter: Some(-1) }, // D♭
+                2 => Pitch { step: NaturalTone::D, octave, alter: None },
+                3 => Pitch { step: NaturalTone::E, octave, alter: Some(-1) }, // E♭
+                4 => Pitch { step: NaturalTone::E, octave, alter: None },
+                5 => Pitch { step: NaturalTone::F, octave, alter: None },
+                6 => Pitch { step: NaturalTone::G, octave, alter: Some(-1) }, // G♭
+                7 => Pitch { step: NaturalTone::G, octave, alter: None },
+                8 => Pitch { step: NaturalTone::A, octave, alter: Some(-1) }, // A♭
+                9 => Pitch { step: NaturalTone::A, octave, alter: None },
+                10 => Pitch { step: NaturalTone::B, octave, alter: Some(-1) }, // B♭
+                11 => Pitch { step: NaturalTone::B, octave, alter: None },
                 _ => unreachable!("invalid semitone in octave"),
             }
         } else {
             match semitone_in_octave {
-                0 => Pitch {
-                    step: NaturalTone::C,
-                    octave,
-                    alter: None,
-                },
-                1 => Pitch {
-                    step: NaturalTone::C,
-                    octave,
-                    alter: Some(1),
-                }, // C♯
-                2 => Pitch {
-                    step: NaturalTone::D,
-                    octave,
-                    alter: None,
-                },
-                3 => Pitch {
-                    step: NaturalTone::D,
-                    octave,
-                    alter: Some(1),
-                }, // D♯
-                4 => Pitch {
-                    step: NaturalTone::E,
-                    octave,
-                    alter: None,
-                },
-                5 => Pitch {
-                    step: NaturalTone::F,
-                    octave,
-                    alter: None,
-                },
-                6 => Pitch {
-                    step: NaturalTone::F,
-                    octave,
-                    alter: Some(1),
-                }, // F♯
-                7 => Pitch {
-                    step: NaturalTone::G,
-                    octave,
-                    alter: None,
-                },
-                8 => Pitch {
-                    step: NaturalTone::G,
-                    octave,
-                    alter: Some(1),
-                }, // G♯
-                9 => Pitch {
-                    step: NaturalTone::A,
-                    octave,
-                    alter: None,
-                },
-                10 => Pitch {
-                    step: NaturalTone::A,
-                    octave,
-                    alter: Some(1),
-                }, // A♯
-                11 => Pitch {
-                    step: NaturalTone::B,
-                    octave,
-                    alter: None,
-                },
+                0 => Pitch { step: NaturalTone::C, octave, alter: None },
+                1 => Pitch { step: NaturalTone::C, octave, alter: Some(1) }, // C♯
+                2 => Pitch { step: NaturalTone::D, octave, alter: None },
+                3 => Pitch { step: NaturalTone::D, octave, alter: Some(1) }, // D♯
+                4 => Pitch { step: NaturalTone::E, octave, alter: None },
+                5 => Pitch { step: NaturalTone::F, octave, alter: None },
+                6 => Pitch { step: NaturalTone::F, octave, alter: Some(1) }, // F♯
+                7 => Pitch { step: NaturalTone::G, octave, alter: None },
+                8 => Pitch { step: NaturalTone::G, octave, alter: Some(1) }, // G♯
+                9 => Pitch { step: NaturalTone::A, octave, alter: None },
+                10 => Pitch { step: NaturalTone::A, octave, alter: Some(1) }, // A♯
+                11 => Pitch { step: NaturalTone::B, octave, alter: None },
                 _ => unreachable!("invalid semitone in octave"),
             }
         }
@@ -1410,11 +1262,7 @@ impl std::str::FromStr for Pitch {
         let octave: i8 =
             s[octave_start..].parse().map_err(|_| "Invalid octave")?;
 
-        Ok(Pitch {
-            step,
-            alter,
-            octave,
-        })
+        Ok(Pitch { step, alter, octave })
     }
 }
 
@@ -1437,12 +1285,7 @@ impl Chord {
             let abs = s + root.to_semitone();
             pitches.push(Pitch::from_semitone(abs, false));
         }
-        Self {
-            root,
-            pitches,
-            quality,
-            transform,
-        }
+        Self { root, pitches, quality, transform }
     }
 
     // Convert chord pitches into MusicXML compatable notes
