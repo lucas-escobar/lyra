@@ -15,9 +15,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Lucas Escobar",
         "From Pokemon Snap (N64)",
     );
-    // TODO handle divisions better. this should be stored in the part and accessed
-    // internally
-    let divisions = 480;
 
     score.add_part(
         "P1",
@@ -43,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_mode: Mode::Major,
                 time_sig: TimeSignature { numerator: 12, denominator: 8 },
                 clefs: vec![Clef::Bass],
-                divisions,
+                ..AttributesOptions::default()
             });
 
             p.add_measure(Some(attr), |m| {
@@ -178,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_mode: Mode::Major,
                 time_sig: TimeSignature { numerator: 12, denominator: 8 },
                 clefs: vec![Clef::Treble],
-                divisions,
+                ..AttributesOptions::default()
             });
 
             p.add_measure(Some(attr), |m| {
@@ -497,7 +494,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_mode: Mode::Major,
                 time_sig: TimeSignature { numerator: 12, denominator: 8 },
                 clefs: vec![Clef::Treble],
-                divisions,
+                ..AttributesOptions::default()
             });
 
             p.add_measure(Some(attr), |m| {
@@ -767,7 +764,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_mode: Mode::Major,
                 time_sig: TimeSignature { numerator: 12, denominator: 8 },
                 clefs: vec![Clef::Treble],
-                divisions,
+                ..AttributesOptions::default()
             });
 
             p.add_measure(Some(attr), |m| {
@@ -861,7 +858,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_mode: Mode::Major,
                 time_sig: TimeSignature { numerator: 12, denominator: 8 },
                 clefs: vec![Clef::Treble],
-                divisions,
+                ..AttributesOptions::default()
             });
 
             p.add_measure(Some(attr), |m| {

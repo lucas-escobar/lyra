@@ -1,4 +1,7 @@
+/// Write formatted XML to any writable
 use std::io::Write;
+
+type Result = std::io::Result<()>;
 
 pub struct Attributes<'a>(Vec<(&'a str, &'a str)>);
 
@@ -7,7 +10,7 @@ impl<'a> Attributes<'a> {
         Self(pairs)
     }
 
-    pub fn write_to<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result {
         for (k, v) in &self.0 {
             write!(writer, " {}=\"{}\"", k, v)?;
         }
@@ -34,19 +37,14 @@ impl<W: Write> Writer<W> {
         Self { writer, indent_level: 0, indent_spaces: 2 }
     }
 
-    fn write_indent(&mut self) -> std::io::Result<()> {
+    fn write_indent(&mut self) -> Result {
         for _ in 0..(self.indent_level * self.indent_spaces) {
             write!(self.writer, " ")?;
         }
         Ok(())
     }
 
-    pub fn open_tag(
-        &mut self,
-        tag: &str,
-        attrs: Option<Attributes>,
-        //attrs: Option<&[(&str, &str)]>,
-    ) -> std::io::Result<()> {
+    pub fn open_tag(&mut self, tag: &str, attrs: Option<Attributes>) -> Result {
         self.write_indent()?;
         write!(self.writer, "<{}", tag)?;
         if let Some(attrs) = attrs {
@@ -57,7 +55,7 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    pub fn close_tag(&mut self, tag: &str) -> std::io::Result<()> {
+    pub fn close_tag(&mut self, tag: &str) -> Result {
         self.indent_level -= 1;
         self.write_indent()?;
         writeln!(self.writer, "</{}>", tag)
@@ -67,7 +65,7 @@ impl<W: Write> Writer<W> {
         &mut self,
         tag: &str,
         attrs: Option<Attributes>,
-    ) -> std::io::Result<()> {
+    ) -> Result {
         self.write_indent()?;
         write!(self.writer, "<{}", tag)?;
         if let Some(attrs) = attrs {
@@ -76,26 +74,24 @@ impl<W: Write> Writer<W> {
         writeln!(self.writer, " />")
     }
 
-    pub fn text_element(
-        &mut self,
-        tag: &str,
-        text: &str,
-    ) -> std::io::Result<()> {
+    pub fn text_element(&mut self, tag: &str, text: &str) -> Result {
         self.write_indent()?;
         writeln!(self.writer, "<{tag}>{text}</{tag}>")
     }
 
+    //TODO combine this with text_element()
     pub fn text_element_with_attrs(
         &mut self,
         tag: &str,
         text: &str,
         attrs: Attributes,
-    ) -> std::io::Result<()> {
+    ) -> Result {
         self.write_indent()?;
         writeln!(self.writer, "<{tag}{}>{text}</{tag}>", attrs.to_string())
     }
 
-    pub fn raw(&mut self, s: &str) -> std::io::Result<()> {
+    /// Write raw string (non XML) to internal writer
+    pub fn raw(&mut self, s: &str) -> Result {
         writeln!(self.writer, "{}", s)
     }
 }

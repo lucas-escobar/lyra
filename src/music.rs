@@ -9,6 +9,7 @@ use crate::xml;
 //    ) -> std::io::Result<()>;
 //}
 
+/// Representation of MusicXML Score
 pub struct Score {
     parts: Vec<Part>,
     work_title: String,
@@ -33,23 +34,25 @@ impl Score {
         }
     }
 
+    /// This needs to be used before a score is to be written.
+    /// This is because the number of measures across all parts in a score need
+    /// to be the same. This function will fill each part with empty measures
+    /// as required.
     pub fn finalize(&mut self) {
-        let max_measures =
+        let max =
             self.parts.iter().map(|p| p.measures.len()).max().unwrap_or(0);
-        for part in &mut self.parts {
-            let missing = max_measures - part.measures.len();
+        for p in &mut self.parts {
+            let missing = max - p.measures.len();
             for _ in 0..missing {
-                part.add_empty_measure();
+                p.add_empty_measure();
             }
         }
     }
 
-    // Write as MusicXML.
     pub fn write_to<W: std::io::Write>(
         &mut self,
         writer: &mut W,
     ) -> std::io::Result<()> {
-        // Prepare the score to be used
         self.finalize();
 
         let mut w = xml::Writer::new(writer);
@@ -64,10 +67,10 @@ impl Score {
             Some(xml::Attributes::new(vec![("version", "4.0")])),
         )
         .unwrap();
-        w.open_tag("work", None).unwrap();
-        w.text_element("work-title", &self.work_title).unwrap();
-        w.close_tag("work").unwrap();
-        w.open_tag("identification", None).unwrap();
+        w.open_tag("work", None)?;
+        w.text_element("work-title", &self.work_title)?;
+        w.close_tag("work")?;
+        w.open_tag("identification", None)?;
         w.text_element_with_attrs(
             "creator",
             &self.composer,
@@ -78,16 +81,15 @@ impl Score {
             &self.arranger,
             xml::Attributes::new(vec![("type", "arranger")]),
         )?;
-        w.text_element("source", &self.source).unwrap();
-        w.close_tag("identification").unwrap();
+        w.text_element("source", &self.source)?;
+        w.close_tag("identification")?;
 
         w.open_tag("part-list", None)?;
         for part in &self.parts {
             w.open_tag(
                 "score-part",
                 Some(xml::Attributes::new(vec![("id", &part.id)])),
-            )
-            .unwrap();
+            )?;
             w.text_element("part-name", &part.name)?;
 
             if let Some(inst) = &part.instrument {
@@ -103,7 +105,7 @@ impl Score {
             part.write_to(&mut w)?;
         }
 
-        w.close_tag("score-partwise").unwrap();
+        w.close_tag("score-partwise")?;
         Ok(())
     }
 
@@ -121,44 +123,6 @@ impl Score {
         build(&mut part);
         self.parts.push(part);
         Ok(())
-    }
-}
-
-#[derive(Clone)]
-pub enum NaturalTone {
-    C,
-    D,
-    E,
-    F,
-    G,
-    A,
-    B,
-}
-
-impl NaturalTone {
-    pub fn to_char(&self) -> char {
-        match self {
-            Self::C => 'C',
-            Self::D => 'D',
-            Self::E => 'E',
-            Self::F => 'F',
-            Self::G => 'G',
-            Self::A => 'A',
-            Self::B => 'B',
-        }
-    }
-
-    /// Semitone value relative to C
-    pub fn to_semitone(&self) -> u8 {
-        match self {
-            Self::C => 0,
-            Self::D => 2,
-            Self::E => 4,
-            Self::F => 5,
-            Self::G => 7,
-            Self::A => 9,
-            Self::B => 11,
-        }
     }
 }
 
@@ -202,12 +166,12 @@ impl Part {
     where
         F: FnOnce(&mut Measure),
     {
-        let number = self.measures.len() + 1;
-        let mut measure = Measure::new(number, attributes);
-        f(&mut measure);
-        self.measures.push(measure);
+        let mut m = Measure::new(self.measures.len() + 1, attributes);
+        f(&mut m);
+        self.measures.push(m);
     }
 
+    // TODO allow optional attributes so empty measures can be prepended to part
     pub fn add_empty_measure(&mut self) {
         let attrs = self
             .get_current_attr()
@@ -243,7 +207,7 @@ impl Part {
     }
 }
 
-/// As per MusicXML spec
+/// All modes allowed in <mode> from the MusicXML spec
 pub enum Mode {
     Major,
     Minor,
@@ -308,21 +272,18 @@ pub enum Clef {
 impl Clef {
     pub fn to_sign(&self) -> String {
         match self {
-            Self::Treble => "G".to_string(),
             Self::Bass => "F".to_string(),
-            Self::Alto => "C".to_string(),
-            Self::Soprano => "C".to_string(),
-            Self::Tenor => "G".to_string(),
+            Self::Soprano | Self::Alto => "C".to_string(),
+            Self::Tenor | Self::Treble => "G".to_string(),
         }
     }
 
     pub fn to_line(&self) -> u8 {
         match self {
             Self::Treble => 2,
-            Self::Bass => 4,
             Self::Alto => 3,
             Self::Soprano => 1,
-            Self::Tenor => 4,
+            Self::Tenor | Self::Bass => 4,
         }
     }
 }
@@ -330,16 +291,6 @@ impl Clef {
 pub struct TimeSignature {
     pub numerator: u8,
     pub denominator: u8,
-}
-
-pub struct Attributes {
-    pub divisions: u32,
-    pub key_fifths: i8, // 0 = C major, -1 = F major, 1 = G major
-    pub key_mode: Mode,
-    pub time_beats: u8,     // numerator
-    pub time_beat_type: u8, // denominator
-    pub clefs: Vec<Clef>,
-    pub staves: Option<usize>,
 }
 
 pub struct AttributesOptions {
@@ -360,6 +311,16 @@ impl Default for AttributesOptions {
             divisions: 480,
         }
     }
+}
+
+pub struct Attributes {
+    pub divisions: u32,
+    pub key_fifths: i8, // 0 = C major, -1 = F major, 1 = G major
+    pub key_mode: Mode,
+    pub time_beats: u8,     // numerator
+    pub time_beat_type: u8, // denominator
+    pub clefs: Vec<Clef>,
+    pub staves: Option<usize>,
 }
 
 impl Attributes {
@@ -384,30 +345,31 @@ impl Attributes {
         &self,
         writer: &mut xml::Writer<W>,
     ) -> std::io::Result<()> {
-        writer.open_tag("attributes", None)?;
-        writer.text_element("divisions", &self.divisions.to_string())?;
+        let w = writer;
+        w.open_tag("attributes", None)?;
+        w.text_element("divisions", &self.divisions.to_string())?;
 
-        writer.open_tag("key", None)?;
-        writer.text_element("fifths", &self.key_fifths.to_string())?;
-        writer.text_element("mode", &self.key_mode.to_string())?;
-        writer.close_tag("key")?;
+        w.open_tag("key", None)?;
+        w.text_element("fifths", &self.key_fifths.to_string())?;
+        w.text_element("mode", &self.key_mode.to_string())?;
+        w.close_tag("key")?;
 
-        writer.open_tag("time", None)?;
-        writer.text_element("beats", &self.time_beats.to_string())?;
-        writer.text_element("beat-type", &self.time_beat_type.to_string())?;
-        writer.close_tag("time")?;
+        w.open_tag("time", None)?;
+        w.text_element("beats", &self.time_beats.to_string())?;
+        w.text_element("beat-type", &self.time_beat_type.to_string())?;
+        w.close_tag("time")?;
 
         for (index, clef) in self.clefs.iter().enumerate() {
-            writer.open_tag(
+            w.open_tag(
                 "clef",
                 Some(xml::Attributes::new(vec![(
                     "number",
                     &(index + 1).to_string(),
                 )])),
             )?;
-            writer.text_element("sign", &clef.to_sign().to_string())?;
-            writer.text_element("line", &clef.to_line().to_string())?;
-            writer.close_tag("clef")?;
+            w.text_element("sign", &clef.to_sign().to_string())?;
+            w.text_element("line", &clef.to_line().to_string())?;
+            w.close_tag("clef")?;
         }
 
         // TODO the <staves> element throws an error in MuseScore.
@@ -416,11 +378,12 @@ impl Attributes {
         //    writer.text_element("staves", &staves.to_string())?;
         //}
 
-        writer.close_tag("attributes")?;
+        w.close_tag("attributes")?;
         Ok(())
     }
 }
 
+/// Any MusicXML element that can be placed at the measure level
 pub enum MeasureItem {
     Note(Note),
     Direction(Direction),
@@ -428,13 +391,17 @@ pub enum MeasureItem {
     Forward(Forward),
 }
 
+/// Representation of <backup> element. Moves the time cursor back a set duration
+/// in ticks.
 pub struct Backup {
     duration: u32,
-    footnote: Option<String>, // does nothing
-    level: Option<String>,    // does nothing
+    footnote: Option<String>, // TODO implement
+    level: Option<String>,    // TODO implement
 }
 
 impl Backup {
+    /// Takes a vec of note types (durations) and creates a backup of equivalent
+    /// duration
     pub fn from_note_types(kinds: &[NoteType], divisions: u32) -> Self {
         // TODO note duration cannot currently include dots or time mods
         // as seen in the to_duration() fn
@@ -454,6 +421,8 @@ impl Backup {
     }
 }
 
+/// Representation of <forward> element. Moves time cursor forward a certain
+/// duration measured in ticks.
 pub struct Forward {
     duration: u32,
     footnote: Option<String>,
@@ -461,6 +430,9 @@ pub struct Forward {
     staff: Option<u8>,
 }
 
+/// Representation of <measure>. Each measure has an optional attributes
+/// element which sets things like time signature or key for all measures
+/// proceeding it.
 pub struct Measure {
     number: usize,
     items: Vec<MeasureItem>,
@@ -523,6 +495,7 @@ impl Measure {
         }))
     }
 
+    /// Convenience function to add a dynamic direction to a measure
     pub fn add_dynamics(&mut self, dynamics: &str) {
         self.add_item(MeasureItem::Direction(Direction {
             kind: DirectionType::Dynamics(Dynamics::from_str(dynamics)),
@@ -531,6 +504,11 @@ impl Measure {
         }));
     }
 
+    /// Convenience function to add a note to a measure.
+    /// Parses notes from custom DSL format:
+    /// pitch:duration
+    /// ie. "C4:h." -> C note, 4th octave, dotted half note
+    /// See NoteType::from_char() for all duration chars
     pub fn add_note(&mut self, note_str: &str) {
         let parts: Vec<&str> = note_str.split(':').collect();
         assert!(
@@ -540,6 +518,10 @@ impl Measure {
         self.add_item(MeasureItem::Note(Note::new(note_str.parse().unwrap())));
     }
 
+    /// Convenience function to add a rest to a measure.
+    /// Parses rests from custom DSL format specifying duration
+    /// ie. "h." -> dotted half rest
+    /// See NoteType::from_char() for all duration chars
     pub fn add_rest(&mut self, rest: &str) {
         let parts: Vec<&str> = rest.split(':').collect();
         assert!(
@@ -549,6 +531,9 @@ impl Measure {
         self.add_item(MeasureItem::Note(Note::new(rest.parse().unwrap())));
     }
 
+    /// Convenience function to add a chord to a measure.
+    /// Parses chord from custom DSL format specifying root:quality:duration
+    /// ie. "C4:maj:h." -> Cmaj triad with dotted half note duration
     pub fn add_chord(
         &mut self,
         chord: Chord,
@@ -557,6 +542,7 @@ impl Measure {
         staff: Option<u8>,
         voice: Option<u8>,
     ) {
+        // TODO old code, implement based on fn description
         let notes = chord.to_notes(kind, divisions, staff, voice);
         for n in notes {
             self.items.push(MeasureItem::Note(n));
@@ -664,17 +650,6 @@ pub struct Direction {
 }
 
 impl Direction {
-    //pub fn new(
-    //    kind: DirectionType,
-    //    placement: Option<&str>,
-
-    //) -> Self {
-    //    Self {
-    //        kind,
-    //        placement: placement.map(|s| s.to_string()),
-    //    }
-    //}
-
     pub fn write_to<W: std::io::Write>(
         &self,
         writer: &mut xml::Writer<W>,
@@ -696,7 +671,6 @@ impl Direction {
                 writer.open_tag("metronome", None)?;
                 writer.text_element("beat-unit", beat_unit)?;
                 writer.text_element("per-minute", &per_minute.to_string())?;
-
                 writer.close_tag("metronome")?;
             }
             DirectionType::Dynamics(value) => {
@@ -861,6 +835,7 @@ impl Notations {
     }
 }
 
+/// To represent things like triplets
 pub struct TimeModification {
     actual_note_beats: u8,
     normal_note_beats: u8,
@@ -1067,13 +1042,13 @@ pub enum NoteType {
     Maxima,
     Long,
     Breve,
-    Whole,        // semibreve
-    Half,         // minim
-    Quarter,      // crotchet
-    Eighth,       // quaver
-    Sixteenth,    // semiquaver
-    ThirtySecond, // demisemiquaver
-    SixtyFourth,  // hemidemisemiquaver
+    Whole,
+    Half,
+    Quarter,
+    Eighth,
+    Sixteenth,
+    ThirtySecond,
+    SixtyFourth,
     OneTwentyEighth,
     TwoFiftySixth,
     FiveTwelvth,
@@ -1123,6 +1098,7 @@ impl NoteType {
             Self::TenTwentyFourth => divisions / 256,
         };
 
+        // TODO this can be generalized
         let dotted = match dots.unwrap_or(0) {
             0 => base,
             1 => base + (base / 2),
@@ -1131,6 +1107,7 @@ impl NoteType {
             _ => panic!("Unsupported number of dots: >3"),
         };
 
+        // TODO put this functionality inside time mod struct
         if let Some(tm) = time_mod {
             dotted * tm.normal_note_beats as u32 / tm.actual_note_beats as u32
         } else {
@@ -1166,9 +1143,7 @@ impl Pitch {
             semitone += alter;
         }
         semitone += (self.octave + 1) * 12;
-        if semitone < 0 || semitone > 127 {
-            panic!("semitone out of midi range");
-        }
+        assert!(semitone > 0, "Semitone out of midi range");
         semitone as u8
     }
 
@@ -1363,3 +1338,41 @@ impl ChordQuality {
 
 pub struct Scale;
 pub struct Voice;
+
+#[derive(Clone)]
+pub enum NaturalTone {
+    C,
+    D,
+    E,
+    F,
+    G,
+    A,
+    B,
+}
+
+impl NaturalTone {
+    pub fn to_char(&self) -> char {
+        match self {
+            Self::C => 'C',
+            Self::D => 'D',
+            Self::E => 'E',
+            Self::F => 'F',
+            Self::G => 'G',
+            Self::A => 'A',
+            Self::B => 'B',
+        }
+    }
+
+    /// Semitone value relative to C
+    pub fn to_semitone(&self) -> u8 {
+        match self {
+            Self::C => 0,
+            Self::D => 2,
+            Self::E => 4,
+            Self::F => 5,
+            Self::G => 7,
+            Self::A => 9,
+            Self::B => 11,
+        }
+    }
+}

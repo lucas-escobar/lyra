@@ -1,3 +1,5 @@
+/// Definitions for all instruments supported by MuseScore Studio 4.5.2
+/// https://musescore.org/en/instruments
 pub enum MusescoreInstrumentSound {
     BrassAlphorn,
     BrassAltohorn,
@@ -340,6 +342,9 @@ pub enum MusescoreInstrumentSound {
 }
 
 impl MusescoreInstrumentSound {
+    /// Each MuseScore instrument contains a MusicXMLid field to be used inside
+    /// MusicXML notation. This is a string to be placed inside the <sound> tag
+    /// inside the <score-instrument>.
     pub fn to_id(&self) -> String {
         match self {
             Self::BrassAlphorn => "brass.alphorn".to_string(),
