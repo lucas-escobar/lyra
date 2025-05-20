@@ -1,5 +1,5 @@
 /// General MIDI Instrument Patch Map
-pub enum Instrument {
+pub enum GeneralMidiInstrument {
     // Piano
     AcousticGrandPiano = 1,
     BrightAcousticPiano,
@@ -161,7 +161,7 @@ pub enum Instrument {
     Gunshot,
 }
 
-impl Instrument {
+impl GeneralMidiInstrument {
     pub fn program_change_number(self) -> u8 {
         self as u8
     }

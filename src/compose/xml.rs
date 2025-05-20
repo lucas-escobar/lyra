@@ -3,9 +3,9 @@ use std::io::Write;
 
 type Result = std::io::Result<()>;
 
-pub struct Attributes<'a>(Vec<(&'a str, &'a str)>);
+pub struct XmlAttributes<'a>(Vec<(&'a str, &'a str)>);
 
-impl<'a> Attributes<'a> {
+impl<'a> XmlAttributes<'a> {
     pub fn new(pairs: Vec<(&'a str, &'a str)>) -> Self {
         Self(pairs)
     }
@@ -44,7 +44,11 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    pub fn open_tag(&mut self, tag: &str, attrs: Option<Attributes>) -> Result {
+    pub fn open_tag(
+        &mut self,
+        tag: &str,
+        attrs: Option<XmlAttributes>,
+    ) -> Result {
         self.write_indent()?;
         write!(self.writer, "<{}", tag)?;
         if let Some(attrs) = attrs {
@@ -64,7 +68,7 @@ impl<W: Write> Writer<W> {
     pub fn self_closing_tag(
         &mut self,
         tag: &str,
-        attrs: Option<Attributes>,
+        attrs: Option<XmlAttributes>,
     ) -> Result {
         self.write_indent()?;
         write!(self.writer, "<{}", tag)?;
@@ -84,7 +88,7 @@ impl<W: Write> Writer<W> {
         &mut self,
         tag: &str,
         text: &str,
-        attrs: Attributes,
+        attrs: XmlAttributes,
     ) -> Result {
         self.write_indent()?;
         writeln!(self.writer, "<{tag}{}>{text}</{tag}>", attrs.to_string())

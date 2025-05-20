@@ -1,5 +1,5 @@
 /// Music theory related concepts. Based around the MusicXML spec.
-use crate::xml;
+use crate::compose::xml;
 
 // TODO determine if i need to refer to xmlwriteable things generically
 //pub trait XmlWritable {
@@ -18,19 +18,21 @@ pub struct Score {
     source: String,
 }
 
+pub struct ScoreOptions<'a> {
+    pub title: &'a str,
+    pub composer: &'a str,
+    pub arranger: &'a str,
+    pub source: Option<&'a str>,
+}
+
 impl Score {
-    pub fn new(
-        title: &str,
-        composer: &str,
-        arranger: &str,
-        source: &str,
-    ) -> Self {
+    pub fn new(opt: ScoreOptions) -> Self {
         Self {
             parts: Vec::new(),
-            work_title: title.to_string(),
-            composer: composer.to_string(),
-            arranger: arranger.to_string(),
-            source: source.to_string(),
+            work_title: opt.title.to_string(),
+            composer: opt.composer.to_string(),
+            arranger: opt.arranger.to_string(),
+            source: opt.source.unwrap_or_default().to_string(),
         }
     }
 
@@ -64,7 +66,7 @@ impl Score {
 
         w.open_tag(
             "score-partwise",
-            Some(xml::Attributes::new(vec![("version", "4.0")])),
+            Some(xml::XmlAttributes::new(vec![("version", "4.0")])),
         )
         .unwrap();
         w.open_tag("work", None)?;
@@ -74,12 +76,12 @@ impl Score {
         w.text_element_with_attrs(
             "creator",
             &self.composer,
-            xml::Attributes::new(vec![("type", "composer")]),
+            xml::XmlAttributes::new(vec![("type", "composer")]),
         )?;
         w.text_element_with_attrs(
             "creator",
             &self.arranger,
-            xml::Attributes::new(vec![("type", "arranger")]),
+            xml::XmlAttributes::new(vec![("type", "arranger")]),
         )?;
         w.text_element("source", &self.source)?;
         w.close_tag("identification")?;
@@ -88,7 +90,7 @@ impl Score {
         for part in &self.parts {
             w.open_tag(
                 "score-part",
-                Some(xml::Attributes::new(vec![("id", &part.id)])),
+                Some(xml::XmlAttributes::new(vec![("id", &part.id)])),
             )?;
             w.text_element("part-name", &part.name)?;
 
@@ -111,15 +113,14 @@ impl Score {
 
     pub fn add_part<F>(
         &mut self,
-        id: &str,
         name: &str,
-        instrument: Option<CombinedInstrument>,
         build: F,
     ) -> Result<(), Box<dyn std::error::Error>>
     where
         F: FnOnce(&mut Part),
     {
-        let mut part = Part::new(id, name, instrument);
+        let id = format!("P{}", self.parts.len() + 1);
+        let mut part = Part::new(&id, name);
         build(&mut part);
         self.parts.push(part);
         Ok(())
@@ -134,16 +135,12 @@ pub struct Part {
 }
 
 impl Part {
-    pub fn new(
-        id: &str,
-        name: &str,
-        instrument: Option<CombinedInstrument>,
-    ) -> Self {
+    pub fn new(id: &str, name: &str) -> Self {
         Self {
             measures: Vec::new(),
             id: id.to_string(),
             name: name.to_string(),
-            instrument,
+            instrument: None,
         }
     }
 
@@ -153,7 +150,7 @@ impl Part {
     ) -> std::io::Result<()> {
         writer.open_tag(
             "part",
-            Some(xml::Attributes::new(vec![("id", &self.id)])),
+            Some(xml::XmlAttributes::new(vec![("id", &self.id)])),
         )?;
         for m in &self.measures {
             m.write_to(writer)?;
@@ -205,6 +202,37 @@ impl Part {
         }
         None
     }
+
+    /// Add a MusicXML instrument (combined <midi-instrument> and
+    /// <score-instrument>). This instrument is a suggestion to external  
+    /// programs reading the XML file. The actual playback depends on the user
+    /// of the file. For lyra related audio rendering, use the instruments defined
+    /// in the render layer.
+    ///
+    /// Many options in both instrument elements are missing from this
+    /// convenience function.
+    pub fn add_instrument(
+        &mut self,
+        name: &str,
+        midi_program: Option<u8>,
+        sound: Option<String>,
+    ) {
+        // TODO only supports one instrument per part currently
+        let id = format!("P{}-I{}", self.id, 1);
+        self.instrument = Some(CombinedInstrument {
+            midi: MidiInstrument {
+                id: id.clone(),
+                program: midi_program,
+                ..MidiInstrument::default()
+            },
+            score: ScoreInstrument {
+                id,
+                name: name.into(),
+                sound,
+                ..ScoreInstrument::default()
+            },
+        })
+    }
 }
 
 /// All modes allowed in <mode> from the MusicXML spec
@@ -234,6 +262,26 @@ impl Mode {
             Self::Ionian => "ionian".to_string(),
             Self::Locrian => "locrian".to_string(),
             Self::None => "none".to_string(),
+        }
+    }
+}
+
+impl std::str::FromStr for Mode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "major" => Ok(Mode::Major),
+            "minor" => Ok(Mode::Minor),
+            "dorian" => Ok(Mode::Dorian),
+            "phrygian" => Ok(Mode::Phrygian),
+            "lydian" => Ok(Mode::Lydian),
+            "mixolydian" => Ok(Mode::Mixolydian),
+            "aeolian" => Ok(Mode::Aeolian),
+            "ionian" => Ok(Mode::Ionian),
+            "locrian" => Ok(Mode::Locrian),
+            "none" => Ok(Mode::None),
+            other => Err(format!("Unknown mode: '{}'", other)),
         }
     }
 }
@@ -272,18 +320,33 @@ pub enum Clef {
 impl Clef {
     pub fn to_sign(&self) -> String {
         match self {
-            Self::Bass => "F".to_string(),
             Self::Soprano | Self::Alto => "C".to_string(),
             Self::Tenor | Self::Treble => "G".to_string(),
+            Self::Bass => "F".to_string(),
         }
     }
 
     pub fn to_line(&self) -> u8 {
         match self {
+            Self::Soprano => 1,
             Self::Treble => 2,
             Self::Alto => 3,
-            Self::Soprano => 1,
             Self::Tenor | Self::Bass => 4,
+        }
+    }
+}
+
+impl std::str::FromStr for Clef {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "treble" => Ok(Clef::Treble),
+            "bass" => Ok(Clef::Bass),
+            "alto" => Ok(Clef::Alto),
+            "soprano" => Ok(Clef::Soprano),
+            "tenor" => Ok(Clef::Tenor),
+            other => Err(format!("Unknown clef: '{}'", other)),
         }
     }
 }
@@ -293,22 +356,38 @@ pub struct TimeSignature {
     pub denominator: u8,
 }
 
-pub struct AttributesOptions {
-    pub key_name: String,
-    pub key_mode: Mode,
-    pub time_sig: TimeSignature,
-    pub clefs: Vec<Clef>,
-    pub divisions: u32,
+impl std::str::FromStr for TimeSignature {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split('/').collect();
+        assert!(parts.len() == 2, "Improperly formatted time signature found");
+
+        let numerator = parts[0]
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid numerator: '{}'", parts[0]))?;
+        let denominator = parts[1]
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid denominator: '{}'", parts[1]))?;
+
+        Ok(TimeSignature { numerator, denominator })
+    }
 }
 
-impl Default for AttributesOptions {
+pub struct AttributesOptions<'a> {
+    pub key_name: &'a str,
+    pub key_mode: &'a str,
+    pub time_sig: &'a str,
+    pub clefs: Vec<&'a str>,
+}
+
+impl Default for AttributesOptions<'_> {
     fn default() -> Self {
         Self {
-            key_name: "C".to_string(),
-            key_mode: Mode::Major,
-            time_sig: TimeSignature { numerator: 4, denominator: 4 },
-            clefs: vec![Clef::Treble],
-            divisions: 480,
+            key_name: "C",
+            key_mode: "major",
+            time_sig: "4/4",
+            clefs: vec!["treble"],
         }
     }
 }
@@ -329,15 +408,19 @@ impl Attributes {
         if opt.clefs.len() > 1 {
             staves = Some(opt.clefs.len());
         }
+        let clefs = opt.clefs.iter().map(|c| c.parse().unwrap()).collect();
+        let time_sig: TimeSignature = opt.time_sig.parse().unwrap();
 
         Self {
-            divisions: opt.divisions,
+            // TODO divisions are hard coded to be 480. Add more flexibility
+            // so its globally applied to score
+            divisions: 480,
             key_fifths: key_fifths_from_name(&opt.key_name),
-            key_mode: opt.key_mode,
-            time_beats: opt.time_sig.numerator,
-            time_beat_type: opt.time_sig.denominator,
+            key_mode: opt.key_mode.parse().unwrap(),
+            time_beats: time_sig.numerator,
+            time_beat_type: time_sig.denominator,
             staves,
-            clefs: opt.clefs,
+            clefs,
         }
     }
 
@@ -362,7 +445,7 @@ impl Attributes {
         for (index, clef) in self.clefs.iter().enumerate() {
             w.open_tag(
                 "clef",
-                Some(xml::Attributes::new(vec![(
+                Some(xml::XmlAttributes::new(vec![(
                     "number",
                     &(index + 1).to_string(),
                 )])),
@@ -374,9 +457,9 @@ impl Attributes {
 
         // TODO the <staves> element throws an error in MuseScore.
         // Check if this is my impl issue or musescores.
-        //if let Some(staves) = &self.staves {
-        //    writer.text_element("staves", &staves.to_string())?;
-        //}
+        if let Some(staves) = &self.staves {
+            w.text_element("staves", &staves.to_string())?;
+        }
 
         w.close_tag("attributes")?;
         Ok(())
@@ -450,7 +533,7 @@ impl Measure {
     ) -> std::io::Result<()> {
         writer.open_tag(
             "measure",
-            Some(xml::Attributes::new(vec![(
+            Some(xml::XmlAttributes::new(vec![(
                 "number",
                 &self.number.to_string(),
             )])),
@@ -515,7 +598,17 @@ impl Measure {
             parts.len() == 2,
             "add_note requires a pitch:duration notation"
         );
-        self.add_item(MeasureItem::Note(Note::new(note_str.parse().unwrap())));
+
+        // initial note from string parse
+        let mut note = Note::new(note_str.parse().unwrap());
+
+        // TODO check if part has multiple staves and a:pply staff info to note.
+        // If note is above middle c put on treble, if below put bass.
+        // Only allow multiple staves for treble + bass combo.
+        //
+        note.staff = Some(1);
+
+        self.add_item(MeasureItem::Note(note));
     }
 
     /// Convenience function to add a rest to a measure.
@@ -580,7 +673,7 @@ impl MidiInstrument {
     ) -> std::io::Result<()> {
         writer.open_tag(
             "midi-instrument",
-            Some(xml::Attributes::new(vec![("id", &self.id)])),
+            Some(xml::XmlAttributes::new(vec![("id", &self.id)])),
         )?;
 
         // TODO implement writing for all optional fields
@@ -612,7 +705,7 @@ impl ScoreInstrument {
     ) -> std::io::Result<()> {
         writer.open_tag(
             "score-instrument",
-            Some(xml::Attributes::new(vec![("id", &self.id)])),
+            Some(xml::XmlAttributes::new(vec![("id", &self.id)])),
         )?;
         writer.text_element("instrument-name", &self.name)?;
 
@@ -660,7 +753,7 @@ impl Direction {
             .map(|place| vec![("placement", place.as_str())])
             .unwrap_or_default();
 
-        writer.open_tag("direction", Some(xml::Attributes::new(attrs)))?;
+        writer.open_tag("direction", Some(xml::XmlAttributes::new(attrs)))?;
         writer.open_tag("direction-type", None)?;
 
         match &self.kind {
@@ -715,6 +808,7 @@ impl Dynamics {
         }
     }
 
+    // TODO implement std::std::FromStr instead
     pub fn from_str(value: &str) -> Dynamics {
         match value {
             "ppp" => Dynamics::PPP,
@@ -814,7 +908,10 @@ impl NotationType {
         match self {
             Self::Tuplet(t) => writer.self_closing_tag(
                 "tuplet",
-                Some(xml::Attributes::new(vec![("type", &t.kind.to_string())])),
+                Some(xml::XmlAttributes::new(vec![(
+                    "type",
+                    &t.kind.to_string(),
+                )])),
             ),
             _ => panic!("Notation type not implemented"),
         }
@@ -973,11 +1070,6 @@ impl Note {
             pitch: opt.pitch,
             is_chord: opt.is_chord,
             duration,
-            //duration: opt.kind.to_duration(
-            //    opt.divisions,
-            //    opt.dots,
-            //    opt.time_mod.as_ref(),
-            //),
             staff: opt.staff,
             voice: opt.voice,
             time_mod: opt.time_mod,
@@ -1003,7 +1095,7 @@ impl Note {
             pitch.write_to(writer)?;
         } else {
             let rest_attrs = if self.is_measure_rest {
-                Some(xml::Attributes::new(vec![("measure", "yes")]))
+                Some(xml::XmlAttributes::new(vec![("measure", "yes")]))
             } else {
                 None
             };
