@@ -458,7 +458,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             key_name: "C#",
             key_mode: "major",
             time_sig: "12/8",
-            clefs: vec!["treble", "bass"],
+            clefs: vec!["bass"],
         });
 
         p.add_measure(Some(attr), |m| {

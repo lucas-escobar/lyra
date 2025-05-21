@@ -132,6 +132,12 @@ pub struct Part {
     id: String,
     name: String,
     instrument: Option<CombinedInstrument>,
+
+    /// For measures (and notes) to have reference to the most recently defined
+    /// <attributes>, this value is updated on measure creation if the measure
+    /// contains attributes. This is then rolled forward to each new measure
+    /// that does not contain any attributes.
+    effective_attributes: Option<Attributes>,
 }
 
 impl Part {
@@ -141,6 +147,7 @@ impl Part {
             id: id.to_string(),
             name: name.to_string(),
             instrument: None,
+            effective_attributes: None,
         }
     }
 
@@ -163,7 +170,16 @@ impl Part {
     where
         F: FnOnce(&mut Measure),
     {
-        let mut m = Measure::new(self.measures.len() + 1, attributes);
+        // Update the effective attributes at the part level
+        if let Some(attr) = attributes.clone() {
+            self.effective_attributes = Some(attr);
+        }
+
+        let mut m = Measure::new(
+            self.measures.len() + 1,
+            attributes,
+            self.effective_attributes.clone(),
+        );
         f(&mut m);
         self.measures.push(m);
     }
@@ -188,7 +204,8 @@ impl Part {
         });
 
         let number = self.measures.len() + 1;
-        let mut measure = Measure::new(number, None);
+        let mut measure =
+            Measure::new(number, None, self.effective_attributes.clone());
         measure.add_item(MeasureItem::Note(rest));
         self.measures.push(measure);
     }
@@ -236,6 +253,7 @@ impl Part {
 }
 
 /// All modes allowed in <mode> from the MusicXML spec
+#[derive(Clone)]
 pub enum Mode {
     Major,
     Minor,
@@ -308,6 +326,7 @@ pub fn key_fifths_from_name(name: &str) -> i8 {
     }
 }
 
+#[derive(Clone)]
 pub enum Clef {
     Treble,
     Bass,
@@ -392,6 +411,7 @@ impl Default for AttributesOptions<'_> {
     }
 }
 
+#[derive(Clone)]
 pub struct Attributes {
     pub divisions: u32,
     pub key_fifths: i8, // 0 = C major, -1 = F major, 1 = G major
@@ -520,11 +540,20 @@ pub struct Measure {
     number: usize,
     items: Vec<MeasureItem>,
     attributes: Option<Attributes>,
+
+    /// This value is cloned from the parent part of the measure. This is used
+    /// in measures that do not define new attributes. This is separate from
+    /// attributes because it should not be written to XML.
+    effective_attributes: Option<Attributes>,
 }
 
 impl Measure {
-    pub fn new(number: usize, attributes: Option<Attributes>) -> Self {
-        Self { number, items: Vec::new(), attributes }
+    pub fn new(
+        number: usize,
+        attributes: Option<Attributes>,
+        effective_attributes: Option<Attributes>,
+    ) -> Self {
+        Self { number, items: Vec::new(), attributes, effective_attributes }
     }
 
     pub fn write_to<W: std::io::Write>(
@@ -602,12 +631,34 @@ impl Measure {
         // initial note from string parse
         let mut note = Note::new(note_str.parse().unwrap());
 
-        // TODO check if part has multiple staves and a:pply staff info to note.
-        // If note is above middle c put on treble, if below put bass.
-        // Only allow multiple staves for treble + bass combo.
-        //
-        note.staff = Some(1);
+        // TODO Automatic staff placement for multi staff parts
+        // seems to be somewhat context dependent near middle C.
+        // I need to decide if a more manual method in this API
+        // is required.
 
+        // TODO this might be too strict since attr is optional in MusicXML.
+        // In lyra it is almost required because I tend not to write music
+        // without attributes.
+        let attr = self.attributes.as_ref().unwrap_or_else(|| {
+            self.effective_attributes
+                .as_ref()
+                .expect("Effective attributes must be set")
+        });
+
+        // Support only 1 or 2 staves for now. I'm not sure if more than 2 staves
+        // in a part is common enough to change.
+        if attr.staves == Some(2) {
+            // The only multi-staff case supported is a treble + bass combo
+            if let [Clef::Treble, Clef::Bass] = attr.clefs.as_slice() {
+                if let Some(pitch) = &note.pitch {
+                    if pitch.to_semitone() >= 60 {
+                        note.staff = Some(1);
+                    } else {
+                        note.staff = Some(2);
+                    }
+                }
+            }
+        }
         self.add_item(MeasureItem::Note(note));
     }
 
