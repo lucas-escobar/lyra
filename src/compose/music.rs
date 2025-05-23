@@ -11,7 +11,7 @@ use crate::compose::xml;
 
 /// Representation of MusicXML Score
 pub struct Score {
-    parts: Vec<Part>,
+    pub parts: Vec<Part>,
     work_title: String,
     composer: String,
     arranger: String,
@@ -128,7 +128,7 @@ impl Score {
 }
 
 pub struct Part {
-    measures: Vec<Measure>,
+    pub measures: Vec<Measure>,
     id: String,
     name: String,
     instrument: Option<CombinedInstrument>,
@@ -497,7 +497,7 @@ pub enum MeasureItem {
 /// Representation of <backup> element. Moves the time cursor back a set duration
 /// in ticks.
 pub struct Backup {
-    duration: u32,
+    pub duration: u32,
     footnote: Option<String>, // TODO implement
     level: Option<String>,    // TODO implement
 }
@@ -527,7 +527,7 @@ impl Backup {
 /// Representation of <forward> element. Moves time cursor forward a certain
 /// duration measured in ticks.
 pub struct Forward {
-    duration: u32,
+    pub duration: u32,
     footnote: Option<String>,
     level: Option<String>,
     staff: Option<u8>,
@@ -537,8 +537,8 @@ pub struct Forward {
 /// element which sets things like time signature or key for all measures
 /// proceeding it.
 pub struct Measure {
+    pub items: Vec<MeasureItem>,
     number: usize,
-    items: Vec<MeasureItem>,
     attributes: Option<Attributes>,
 
     /// This value is cloned from the parent part of the measure. This is used
@@ -887,6 +887,19 @@ impl Dynamics {
             Dynamics::FFF => 127,
         }
     }
+
+    pub fn normalized_velocity(&self) -> f64 {
+        match self {
+            Dynamics::PPP => 16.0 / 127.0,
+            Dynamics::PP => 33.0 / 127.0,
+            Dynamics::P => 49.0 / 127.0,
+            Dynamics::MP => 64.0 / 127.0,
+            Dynamics::MF => 80.0 / 127.0,
+            Dynamics::F => 96.0 / 127.0,
+            Dynamics::FF => 112.0 / 127.0,
+            Dynamics::FFF => 127.0 / 127.0,
+        }
+    }
 }
 
 pub enum Stem {
@@ -1014,9 +1027,9 @@ impl TimeModification {
 
 pub struct Note {
     kind: NoteType,
-    pitch: Option<Pitch>,
-    is_chord: bool,
-    duration: u32,
+    pub pitch: Option<Pitch>,
+    pub is_chord: bool,
+    pub duration: u32,
     staff: Option<u8>,
     voice: Option<u8>,
     time_mod: Option<TimeModification>,
@@ -1330,6 +1343,11 @@ impl Pitch {
                 _ => unreachable!("invalid semitone in octave"),
             }
         }
+    }
+
+    pub fn to_frequency(&self) -> f64 {
+        let semitone_offset = self.to_semitone();
+        440.0 * 2f64.powf((semitone_offset as f64 - 69.0) / 12.0)
     }
 
     pub fn write_to<W: std::io::Write>(
