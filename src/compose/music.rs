@@ -677,17 +677,17 @@ impl Measure {
 
     /// Convenience function to add a chord to a measure.
     /// Parses chord from custom DSL format specifying root:quality:duration
-    /// ie. "C4:maj:h." -> Cmaj triad with dotted half note duration
-    pub fn add_chord(
-        &mut self,
-        chord: Chord,
-        kind: NoteType,
-        divisions: u32,
-        staff: Option<u8>,
-        voice: Option<u8>,
-    ) {
-        // TODO old code, implement based on fn description
-        let notes = chord.to_notes(kind, divisions, staff, voice);
+    /// ie. "maj:C4:h." -> Cmaj triad with dotted half note duration
+    pub fn add_chord(&mut self, chord_str: &str) {
+        let mut parts = chord_str.splitn(2, ":");
+        let quality = parts.next().unwrap().parse().unwrap();
+        let note = Note::new(parts.next().unwrap().parse().unwrap());
+        let chord = Chord::new(note.pitch.unwrap(), quality, None);
+
+        // TODO refactor to_notes() API. This is hard coded for now. This means
+        // add_chord doesnt work for multi staff parts or multi voice parts.
+        let notes = chord.to_notes(note.kind, 480, None, None);
+
         for n in notes {
             self.items.push(MeasureItem::Note(n));
         }
@@ -1493,6 +1493,32 @@ impl ChordQuality {
             Self::Major9 => vec![0, 4, 7, 11, 14],
             Self::Minor9 => vec![0, 3, 7, 10, 14],
             Self::Dominant9 => vec![0, 4, 7, 10, 14],
+        }
+    }
+}
+
+impl std::str::FromStr for ChordQuality {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "maj" | "major" => Ok(Self::Major),
+            "min" | "minor" => Ok(Self::Minor),
+            "dim" | "diminished" => Ok(Self::Diminished),
+            "aug" | "augmented" => Ok(Self::Augmented),
+            "sus2" => Ok(Self::Sus2),
+            "sus4" => Ok(Self::Sus4),
+            "maj7" | "major7" => Ok(Self::Major7),
+            "min7" | "minor7" => Ok(Self::Minor7),
+            "min7b5" | "minor7b5" => Ok(Self::Minor7b5),
+            "minmaj7" | "minormajor7" => Ok(Self::MinorMajor7),
+            "maj6" | "major6" => Ok(Self::Major6),
+            "min6" | "minor6" => Ok(Self::Minor6),
+            "7" | "dom7" | "dominant7" => Ok(Self::Dominant7),
+            "maj9" | "major9" => Ok(Self::Major9),
+            "min9" | "minor9" => Ok(Self::Minor9),
+            "dom9" | "dominant9" => Ok(Self::Dominant9),
+            other => Err(format!("Unknown chord quality: '{}'", other)),
         }
     }
 }

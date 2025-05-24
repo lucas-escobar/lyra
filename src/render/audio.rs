@@ -11,12 +11,18 @@ pub trait Instrument {
 
 pub trait Envelope: Send + Sync {
     fn amplitude(&self, t: f64, note_duration: f64) -> f64;
+
+    /// The release time of the envelope will extend the notated duration of
+    /// a given note. This function provides this extra time to the renderer
+    /// for proper duration calculations.
+    fn release_time(&self) -> f64;
 }
 
+/// Duration represented in seconds.
 pub struct ADSR {
     pub attack: f64,
     pub decay: f64,
-    pub sustain: f64,
+    pub sustain: f64, // 0.0 - 1.0 value representing % of max volume
     pub release: f64,
 }
 
@@ -38,6 +44,10 @@ impl Envelope for ADSR {
         } else {
             0.0
         }
+    }
+
+    fn release_time(&self) -> f64 {
+        self.release
     }
 }
 
@@ -109,30 +119,38 @@ pub struct Synth {
     pub oscillator: OscillatorType,
     pub envelope: Box<dyn Envelope>,
     pub gain: f64,
-    pub sample_rate: f64,
 }
 
 impl Instrument for Synth {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64> {
-        let mut buffer = vec![0.0; ctx.sample_rate * 60]; // buffer for 60s, resize later
+        let mut buffer = vec![0.0; ctx.sample_rate * 60];
         let mut state = RenderState::default();
 
         for measure in &part.measures {
+            let mut last_start_time_beats = state.time_beats;
             for item in &measure.items {
                 match item {
                     MeasureItem::Note(note) => {
+                        if !note.is_chord {
+                            // Cache the time cursor for chord use
+                            last_start_time_beats = state.time_beats;
+                        }
+
                         if let Some(pitch) = &note.pitch {
                             let freq = pitch.to_frequency();
                             let duration_beats =
                                 note.duration as f64 / state.divisions as f64;
                             let duration_secs =
                                 duration_beats * state.seconds_per_beat();
-                            let start_sample = (state.time_beats
+                            let start_sample = (last_start_time_beats
                                 * state.seconds_per_beat()
                                 * ctx.sample_rate as f64)
                                 .round()
                                 as usize;
-                            let num_samples = (duration_secs
+
+                            let full_duration_secs =
+                                duration_secs + self.envelope.release_time();
+                            let num_samples = (full_duration_secs
                                 * ctx.sample_rate as f64)
                                 .round()
                                 as usize;
@@ -150,7 +168,9 @@ impl Instrument for Synth {
                                     buffer[idx] += sample;
                                 }
                             }
+                        }
 
+                        if !note.is_chord {
                             state.advance(note.duration);
                         }
                     }

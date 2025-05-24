@@ -17,12 +17,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     score.add_part("Bass", |p| {
         let attr = Attributes::new(AttributesOptions::default());
         p.add_measure(Some(attr), |m| {
-            m.add_metronome("quarter", 150);
-            m.add_dynamics("mp");
+            m.add_metronome("quarter", 90);
+            m.add_dynamics("mf");
             m.add_note("C4:q");
             m.add_note("D4:q");
             m.add_note("E4:q");
             m.add_note("F4:q");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("C4:q");
+            m.add_rest("q");
+            m.add_note("E4:q");
+            m.add_rest("q");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("C4:w");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_chord("maj:C4:h");
+            m.add_chord("min:C4:h");
         });
     })?;
 
@@ -30,12 +46,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         oscillator: OscillatorType::Sine,
         envelope: Box::new(ADSR {
             attack: 0.1,
-            decay: 0.1,
+            decay: 0.2,
             sustain: 0.8,
             release: 0.2,
         }),
         gain: 0.5,
-        sample_rate: 44100.0,
     };
 
     let context = RenderContext { sample_rate: 44100 };
