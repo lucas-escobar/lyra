@@ -6,6 +6,7 @@ pub struct RenderContext {
 }
 
 pub trait Instrument {
+    /// Renders a MusicXML part
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64>;
 }
 
@@ -56,6 +57,7 @@ pub struct RenderState {
     pub tempo_bpm: f64,
     pub velocity: f64,
     pub divisions: u32,
+    pub active_voices: Vec<Voice>,
 }
 
 impl Default for RenderState {
@@ -65,6 +67,7 @@ impl Default for RenderState {
             tempo_bpm: 120.0,
             velocity: 80.0 / 127.0, // mf
             divisions: 480,
+            active_voices: vec![],
         }
     }
 }
@@ -72,6 +75,10 @@ impl Default for RenderState {
 impl RenderState {
     pub fn seconds_per_beat(&self) -> f64 {
         60.0 / self.tempo_bpm
+    }
+
+    pub fn time_secs(&self) -> f64 {
+        self.time_beats * self.seconds_per_beat()
     }
 
     pub fn advance(&mut self, duration_divs: u32) {
@@ -113,17 +120,22 @@ impl OscillatorType {
     }
 }
 
+pub struct Voice {
+    pub freq: f64,
+    pub start_time_secs: f64,
+    pub duration_secs: f64,
+    pub velocity: f64,
+}
+
 // INSTRUMENTS
 
 pub struct Synth {
     pub oscillator: OscillatorType,
     pub envelope: Box<dyn Envelope>,
-    pub gain: f64,
 }
 
 impl Instrument for Synth {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64> {
-        let mut buffer = vec![0.0; ctx.sample_rate * 60];
         let mut state = RenderState::default();
 
         for measure in &part.measures {
@@ -142,32 +154,21 @@ impl Instrument for Synth {
                                 note.duration as f64 / state.divisions as f64;
                             let duration_secs =
                                 duration_beats * state.seconds_per_beat();
-                            let start_sample = (last_start_time_beats
-                                * state.seconds_per_beat()
-                                * ctx.sample_rate as f64)
-                                .round()
-                                as usize;
+                            let start_time_secs = last_start_time_beats
+                                * state.seconds_per_beat();
 
-                            let full_duration_secs =
-                                duration_secs + self.envelope.release_time();
-                            let num_samples = (full_duration_secs
-                                * ctx.sample_rate as f64)
-                                .round()
-                                as usize;
+                            // Voices in this context are essentially
+                            // synth events. There is one voice per each
+                            // note processed. This is inefficient but
+                            // good enough for now
+                            let voice = Voice {
+                                freq,
+                                start_time_secs,
+                                duration_secs,
+                                velocity: state.velocity,
+                            };
 
-                            for i in 0..num_samples {
-                                let t = i as f64 / ctx.sample_rate as f64;
-                                let amp =
-                                    self.envelope.amplitude(t, duration_secs);
-                                let sample = self.oscillator.sample(freq, t)
-                                    * amp
-                                    * self.gain
-                                    * state.velocity;
-                                let idx = start_sample + i;
-                                if idx < buffer.len() {
-                                    buffer[idx] += sample;
-                                }
-                            }
+                            state.active_voices.push(voice);
                         }
 
                         if !note.is_chord {
@@ -197,6 +198,58 @@ impl Instrument for Synth {
             }
         }
 
-        buffer
+        // === Render all voices into buffer with voice-aware scaling ===
+        let buffer_len = ctx.sample_rate * 60;
+        let mut mix_buffer: Vec<f64> = vec![0.0; buffer_len];
+        let mut voice_count: Vec<f64> = vec![0.0; buffer_len];
+
+        for voice in &state.active_voices {
+            let full_duration_secs =
+                voice.duration_secs + self.envelope.release_time();
+            let start_sample = (voice.start_time_secs * ctx.sample_rate as f64)
+                .round() as usize;
+            let num_samples =
+                (full_duration_secs * ctx.sample_rate as f64).round() as usize;
+
+            for i in 0..num_samples {
+                let t = i as f64 / ctx.sample_rate as f64;
+                let amp = self.envelope.amplitude(t, voice.duration_secs);
+                let sample = self.oscillator.sample(voice.freq, t)
+                    * amp
+                    * voice.velocity;
+                let idx = start_sample + i;
+                if idx < buffer_len {
+                    mix_buffer[idx] += sample;
+
+                    // Only count this voice as "active" if it hasn't entered release phase
+                    if t < voice.duration_secs {
+                        voice_count[idx] += 1.0;
+                    }
+                }
+            }
+        }
+
+        // Scale loudness
+        let mut final_buffer = vec![0.0; buffer_len];
+        let mut smoothed_gain = 1.0;
+        let alpha = 0.01;
+        let mut gain_frozen = false;
+
+        for i in 0..buffer_len {
+            let raw_gain = if voice_count[i] > 0.0 {
+                gain_frozen = false;
+                1.0 / (voice_count[i] + 1.0).powf(0.65)
+            } else if !gain_frozen {
+                gain_frozen = true;
+                smoothed_gain // Freeze at current level
+            } else {
+                smoothed_gain // Keep using last smoothed value
+            };
+
+            smoothed_gain = alpha * raw_gain + (1.0 - alpha) * smoothed_gain;
+            final_buffer[i] = mix_buffer[i] * smoothed_gain;
+        }
+
+        final_buffer
     }
 }

@@ -40,20 +40,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.add_chord("maj:C4:h");
             m.add_chord("min:C4:h");
         });
+
+        p.add_measure(None, |m| {
+            m.add_chord("maj7:C4:h");
+            m.add_chord("min7:C4:h");
+        });
     })?;
 
     let synth = Synth {
-        oscillator: OscillatorType::Sine,
+        oscillator: OscillatorType::Saw,
         envelope: Box::new(ADSR {
             attack: 0.1,
             decay: 0.2,
             sustain: 0.8,
             release: 0.2,
         }),
-        gain: 0.5,
     };
 
-    let context = RenderContext { sample_rate: 44100 };
+    let context = RenderContext { sample_rate: 44100 * 2 };
     let buffer = synth.render_part(&score.parts[0], &context);
 
     let output_path = Path::new("output/minimal_render.wav");
