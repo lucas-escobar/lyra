@@ -198,7 +198,7 @@ impl Instrument for Synth {
             }
         }
 
-        // === Render all voices into buffer with voice-aware scaling ===
+        // Render all voices into buffer with voice-aware scaling
         let buffer_len = ctx.sample_rate * 60;
         let mut mix_buffer: Vec<f64> = vec![0.0; buffer_len];
         let mut voice_count: Vec<f64> = vec![0.0; buffer_len];
@@ -221,7 +221,8 @@ impl Instrument for Synth {
                 if idx < buffer_len {
                     mix_buffer[idx] += sample;
 
-                    // Only count this voice as "active" if it hasn't entered release phase
+                    // Only count this voice as "active" if it hasn't entered
+                    // release phase
                     if t < voice.duration_secs {
                         voice_count[idx] += 1.0;
                     }
@@ -235,10 +236,11 @@ impl Instrument for Synth {
         let alpha = 0.01;
         let mut gain_frozen = false;
 
+        // TODO this might be too expensive
         for i in 0..buffer_len {
             let raw_gain = if voice_count[i] > 0.0 {
                 gain_frozen = false;
-                1.0 / (voice_count[i] + 1.0).powf(0.65)
+                1.0 / (voice_count[i] + 1.0).powf(0.8)
             } else if !gain_frozen {
                 gain_frozen = true;
                 smoothed_gain // Freeze at current level
