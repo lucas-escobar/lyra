@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         create_dir_all(parent)?;
     }
 
-    save_to_wav(&buffer, context.sample_rate as u32, output_path);
+    save_to_wav(&buffer, None, context.sample_rate as u32, output_path);
 
     Ok(())
 }
