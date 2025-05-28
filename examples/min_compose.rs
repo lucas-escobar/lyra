@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.add_dynamics("mf");
             m.add_note("C#2:h~");
             m.add_note("C#2:q");
+            m.add_rest("q");
         });
 
         p.add_measure(None, |m| {

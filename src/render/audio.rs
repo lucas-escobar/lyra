@@ -1,4 +1,5 @@
-use crate::compose::{DirectionType, MeasureItem, Part};
+use crate::compose::{DirectionType, MeasureItem, Part, Pitch, StartStop};
+use std::collections::HashMap;
 use std::f64::consts::PI;
 
 pub struct RenderContext {
@@ -137,6 +138,8 @@ pub struct Synth {
 impl Instrument for Synth {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64> {
         let mut state = RenderState::default();
+        let mut ongoing_ties: HashMap<u8, (f64, f64)> = HashMap::new();
+        // Pitch => (start_time_beats, total_duration_beats)
 
         for measure in &part.measures {
             let mut last_start_time_beats = state.time_beats;
@@ -150,6 +153,7 @@ impl Instrument for Synth {
 
                         if let Some(pitch) = &note.pitch {
                             let freq = pitch.to_frequency();
+                            let midi = pitch.to_semitone();
                             let duration_beats =
                                 note.duration as f64 / state.divisions as f64;
                             let duration_secs =
@@ -157,18 +161,48 @@ impl Instrument for Synth {
                             let start_time_secs = last_start_time_beats
                                 * state.seconds_per_beat();
 
-                            // Voices in this context are essentially
-                            // synth events. There is one voice per each
-                            // note processed. This is inefficient but
-                            // good enough for now
-                            let voice = Voice {
-                                freq,
-                                start_time_secs,
-                                duration_secs,
-                                velocity: state.velocity,
-                            };
-
-                            state.active_voices.push(voice);
+                            match note.tie {
+                                Some(StartStop::Start) => {
+                                    ongoing_ties.insert(
+                                        midi,
+                                        (start_time_secs, duration_secs),
+                                    );
+                                }
+                                Some(StartStop::Stop) => {
+                                    if let Some((prev_start, prev_duration)) =
+                                        ongoing_ties.remove(&midi)
+                                    {
+                                        let combined_duration =
+                                            prev_duration + duration_secs;
+                                        let voice = Voice {
+                                            freq,
+                                            start_time_secs: prev_start,
+                                            duration_secs: combined_duration,
+                                            velocity: state.velocity,
+                                        };
+                                        state.active_voices.push(voice);
+                                    } else {
+                                        // Treat it as a normal note if we have no matching start
+                                        let voice = Voice {
+                                            freq,
+                                            start_time_secs,
+                                            duration_secs,
+                                            velocity: state.velocity,
+                                        };
+                                        state.active_voices.push(voice);
+                                    }
+                                }
+                                _ => {
+                                    // Not part of a tie, render normally
+                                    let voice = Voice {
+                                        freq,
+                                        start_time_secs,
+                                        duration_secs,
+                                        velocity: state.velocity,
+                                    };
+                                    state.active_voices.push(voice);
+                                }
+                            }
                         }
 
                         if !note.is_chord {
@@ -198,10 +232,9 @@ impl Instrument for Synth {
             }
         }
 
-        // Render all voices into buffer with voice-aware scaling
         let buffer_len = ctx.sample_rate * 60;
         let mut mix_buffer: Vec<f64> = vec![0.0; buffer_len];
-        let mut voice_count: Vec<f64> = vec![0.0; buffer_len];
+        let mut loudness_sum: Vec<f64> = vec![0.0; buffer_len];
 
         for voice in &state.active_voices {
             let full_duration_secs =
@@ -218,40 +251,95 @@ impl Instrument for Synth {
                     * amp
                     * voice.velocity;
                 let idx = start_sample + i;
+
                 if idx < buffer_len {
                     mix_buffer[idx] += sample;
 
-                    // Only count this voice as "active" if it hasn't entered
-                    // release phase
-                    if t < voice.duration_secs {
-                        voice_count[idx] += 1.0;
-                    }
+                    // Count only during sustain (not release)
+                    //if t < voice.duration_secs {
+                    //    voice_count[idx] += 1.0;
+                    //}
+                    loudness_sum[idx] += amp * voice.velocity;
                 }
             }
         }
 
-        // Scale loudness
         let mut final_buffer = vec![0.0; buffer_len];
         let mut smoothed_gain = 1.0;
         let alpha = 0.01;
         let mut gain_frozen = false;
 
-        // TODO this might be too expensive
         for i in 0..buffer_len {
-            let raw_gain = if voice_count[i] > 0.0 {
+            let raw_gain = if loudness_sum[i] > 0.0 {
                 gain_frozen = false;
-                1.0 / (voice_count[i] + 1.0).powf(0.8)
+                1.0 / (loudness_sum[i] + 1.0).powf(0.8)
             } else if !gain_frozen {
                 gain_frozen = true;
-                smoothed_gain // Freeze at current level
+                smoothed_gain
             } else {
-                smoothed_gain // Keep using last smoothed value
+                smoothed_gain
             };
 
             smoothed_gain = alpha * raw_gain + (1.0 - alpha) * smoothed_gain;
-            final_buffer[i] = mix_buffer[i] * smoothed_gain;
+            final_buffer[i] = (mix_buffer[i] * smoothed_gain).clamp(-1.0, 1.0);
         }
 
         final_buffer
+
+        // Render all voices into buffer with voice-aware scaling
+        //let buffer_len = ctx.sample_rate * 60;
+        //let mut mix_buffer: Vec<f64> = vec![0.0; buffer_len];
+        //let mut voice_count: Vec<f64> = vec![0.0; buffer_len];
+
+        //for voice in &state.active_voices {
+        //    let full_duration_secs =
+        //        voice.duration_secs + self.envelope.release_time();
+        //    let start_sample = (voice.start_time_secs * ctx.sample_rate as f64)
+        //        .round() as usize;
+        //    let num_samples =
+        //        (full_duration_secs * ctx.sample_rate as f64).round() as usize;
+
+        //    for i in 0..num_samples {
+        //        let t = i as f64 / ctx.sample_rate as f64;
+        //        let amp = self.envelope.amplitude(t, voice.duration_secs);
+        //        let sample = self.oscillator.sample(voice.freq, t)
+        //            * amp
+        //            * voice.velocity;
+        //        let idx = start_sample + i;
+        //        if idx < buffer_len {
+        //            mix_buffer[idx] += sample;
+
+        //            // Only count this voice as "active" if it hasn't entered
+        //            // release phase
+        //            if t < voice.duration_secs {
+        //                voice_count[idx] += 1.0;
+        //            }
+        //        }
+        //    }
+        //}
+
+        //// Scale loudness
+        //let mut final_buffer = vec![0.0; buffer_len];
+        //let mut smoothed_gain = 1.0;
+        //let alpha = 0.01;
+        //let mut gain_frozen = false;
+
+        //// TODO this might be too expensive
+        //for i in 0..buffer_len {
+        //    let raw_gain = if voice_count[i] > 0.0 {
+        //        gain_frozen = false;
+        //        1.0 / (voice_count[i] + 1.0).powf(0.8)
+        //    } else if !gain_frozen {
+        //        gain_frozen = true;
+        //        smoothed_gain // Freeze at current level
+        //    } else {
+        //        smoothed_gain // Keep using last smoothed value
+        //    };
+
+        //    smoothed_gain = alpha * raw_gain + (1.0 - alpha) * smoothed_gain;
+        //    final_buffer[i] = mix_buffer[i] * smoothed_gain;
+        //}
+
+        //final_buffer
     }
 }

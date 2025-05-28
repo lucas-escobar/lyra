@@ -45,10 +45,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.add_chord("maj7:C4:h");
             m.add_chord("min7:C4:h");
         });
+
+        p.add_measure(None, |m| {
+            m.add_note("F4:h~");
+            m.add_note("F4:q");
+            m.add_rest("q");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("C4:w~");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("C4:w");
+        });
     })?;
 
     let synth = Synth {
-        oscillator: OscillatorType::Saw,
+        oscillator: OscillatorType::Sine,
         envelope: Box::new(ADSR {
             attack: 0.1,
             decay: 0.2,

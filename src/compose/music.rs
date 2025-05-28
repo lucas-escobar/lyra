@@ -1129,7 +1129,7 @@ pub struct Note {
     time_mod: Option<TimeModification>,
     notations: Option<Notations>,
     dots: Option<u8>,
-    tie: Option<StartStop>,
+    pub tie: Option<StartStop>,
     is_measure_rest: bool,
 }
 
