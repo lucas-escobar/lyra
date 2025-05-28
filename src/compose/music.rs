@@ -122,6 +122,7 @@ impl Score {
         let id = format!("P{}", self.parts.len() + 1);
         let mut part = Part::new(&id, name);
         build(&mut part);
+        part.finalize();
         self.parts.push(part);
         Ok(())
     }
@@ -148,6 +149,78 @@ impl Part {
             name: name.to_string(),
             instrument: None,
             effective_attributes: None,
+        }
+    }
+
+    /// For tied notes (and in the future, other types of notations) to be able
+    /// to span across measures, a post-processing step is required to place
+    /// the correct stop/continue tags on ties based on context that is not
+    /// available to a single note or measure.
+    pub fn finalize(&mut self) {
+        let mut previous_tied_pitch: Option<Pitch> = None;
+        let mut previous_note: Option<&mut Note> = None;
+
+        for measure in &mut self.measures {
+            for item in &mut measure.items {
+                match item {
+                    MeasureItem::Note(note) => {
+                        match (&note.pitch, note.tie.clone()) {
+                            (Some(pitch), Some(StartStop::Start)) => {
+                                // Begin a new tie
+                                previous_tied_pitch = Some(pitch.clone());
+                                previous_note = Some(note);
+                            }
+
+                            (Some(pitch), None) => {
+                                // If this note continues a tie, mark it as stop
+                                if let Some(prev_pitch) = &previous_tied_pitch {
+                                    if pitch.to_semitone()
+                                        == prev_pitch.to_semitone()
+                                    {
+                                        if let Some(prev_note) =
+                                            previous_note.as_mut()
+                                        {
+                                            prev_note.tie =
+                                                Some(StartStop::Start);
+                                        }
+                                        note.tie = Some(StartStop::Stop);
+                                        previous_tied_pitch = None;
+                                        previous_note = None;
+                                    }
+                                }
+                            }
+
+                            (Some(pitch), Some(StartStop::Stop)) => {
+                                if let Some(prev_pitch) = &previous_tied_pitch {
+                                    if pitch.to_semitone()
+                                        == prev_pitch.to_semitone()
+                                    {
+                                        if let Some(prev_note) =
+                                            previous_note.as_mut()
+                                        {
+                                            prev_note.tie =
+                                                Some(StartStop::Start);
+                                        }
+                                    }
+                                }
+                                previous_tied_pitch = None;
+                                previous_note = None;
+                            }
+
+                            _ => {
+                                previous_tied_pitch = None;
+                                previous_note = None;
+                            }
+                        }
+                    }
+
+                    _ => {
+                        // Reset state on non-note items
+                        previous_tied_pitch = None;
+                        previous_note = None;
+                    }
+                }
+            }
         }
     }
 
@@ -902,6 +975,26 @@ impl Dynamics {
     }
 }
 
+/// MusicXML tied-type used for <tied> elements. This is for notations, not
+/// sound direction.
+pub enum Tied {
+    Start,
+    Stop,
+    Continue,
+    LetRing,
+}
+
+impl Tied {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::Start => "start".to_string(),
+            Self::Stop => "stop".to_string(),
+            Self::Continue => "continue".to_string(),
+            Self::LetRing => "let-ring".to_string(),
+        }
+    }
+}
+
 pub enum Stem {
     Up,
     Down,
@@ -920,6 +1013,7 @@ pub enum Beam {
 }
 
 /// MusicXML attribute type
+#[derive(Clone)]
 pub enum StartStop {
     Start,
     Stop,
@@ -942,7 +1036,7 @@ pub struct Notations {
 }
 
 pub enum NotationType {
-    Tied,
+    Tied(Tied),
     Slur,
     Tuplet(Tuplet),
     Glissando,
@@ -1035,6 +1129,7 @@ pub struct Note {
     time_mod: Option<TimeModification>,
     notations: Option<Notations>,
     dots: Option<u8>,
+    tie: Option<StartStop>,
     is_measure_rest: bool,
 }
 
@@ -1048,9 +1143,13 @@ pub struct NoteOptions {
     pub time_mod: Option<TimeModification>,
     pub notations: Option<Notations>,
     pub dots: Option<u8>,
+    pub tie: Option<StartStop>,
     pub is_measure_rest: bool,
 
-    // TODO this is to handle the case of measure rests
+    // TODO this is to handle the case of measure rests. Measure rests should
+    // ignore the duration derived from note type and other elements, measure
+    // rests will calculate the exact duration in ticks based on time signature.
+    // Maybe there is a cleaner implementation
     pub duration_override: Option<u32>,
 }
 
@@ -1066,6 +1165,7 @@ impl Default for NoteOptions {
             time_mod: None,
             notations: None,
             dots: None,
+            tie: None,
             is_measure_rest: false,
             duration_override: None,
         }
@@ -1080,7 +1180,7 @@ impl std::str::FromStr for NoteOptions {
         if parts.len() > 2 {
             return Err("Expected format like C#4:h.".to_string());
         }
-        let (pitch_opt, duration_str) = match parts.len() {
+        let (pitch_opt, raw_duration_str) = match parts.len() {
             1 => (None, parts[0]), // Rest: "h." format
             2 => {
                 let pitch = parts[0]
@@ -1091,7 +1191,15 @@ impl std::str::FromStr for NoteOptions {
             }
             _ => return Err("Expected format like C#4:h. or h.".to_string()),
         };
-        //let pitch = parts[0].parse::<Pitch>()?;
+
+        // Handle tie symbol (~) anywhere in the duration part.
+        // The stop tie types will be placed in part finalization
+        let tie = if raw_duration_str.contains('~') {
+            Some(StartStop::Start)
+        } else {
+            None
+        };
+        let duration_str = raw_duration_str.replace('~', "");
 
         // Parse duration and dots
         let mut chars = duration_str.chars();
@@ -1103,6 +1211,7 @@ impl std::str::FromStr for NoteOptions {
             pitch: pitch_opt,
             kind,
             dots: if dot_count > 0 { Some(dot_count as u8) } else { None },
+            tie,
             ..NoteOptions::default()
         })
     }
@@ -1139,6 +1248,7 @@ impl Note {
             time_mod: opt.time_mod,
             notations: opt.notations,
             dots: opt.dots,
+            tie: opt.tie,
             is_measure_rest: opt.is_measure_rest,
         }
     }
@@ -1188,6 +1298,14 @@ impl Note {
         if let Some(notations) = &self.notations {
             notations.write_to(writer)?;
         }
+
+        if let Some(tie) = &self.tie {
+            writer.self_closing_tag(
+                "tie",
+                Some(xml::XmlAttributes::new(vec![("type", &tie.to_string())])),
+            )?;
+        }
+
         writer.close_tag("note")?;
         Ok(())
     }
