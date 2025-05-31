@@ -254,11 +254,6 @@ impl Instrument for Synth {
 
                 if idx < buffer_len {
                     mix_buffer[idx] += sample;
-
-                    // Count only during sustain (not release)
-                    //if t < voice.duration_secs {
-                    //    voice_count[idx] += 1.0;
-                    //}
                     loudness_sum[idx] += amp * voice.velocity;
                 }
             }
@@ -285,61 +280,5 @@ impl Instrument for Synth {
         }
 
         final_buffer
-
-        // Render all voices into buffer with voice-aware scaling
-        //let buffer_len = ctx.sample_rate * 60;
-        //let mut mix_buffer: Vec<f64> = vec![0.0; buffer_len];
-        //let mut voice_count: Vec<f64> = vec![0.0; buffer_len];
-
-        //for voice in &state.active_voices {
-        //    let full_duration_secs =
-        //        voice.duration_secs + self.envelope.release_time();
-        //    let start_sample = (voice.start_time_secs * ctx.sample_rate as f64)
-        //        .round() as usize;
-        //    let num_samples =
-        //        (full_duration_secs * ctx.sample_rate as f64).round() as usize;
-
-        //    for i in 0..num_samples {
-        //        let t = i as f64 / ctx.sample_rate as f64;
-        //        let amp = self.envelope.amplitude(t, voice.duration_secs);
-        //        let sample = self.oscillator.sample(voice.freq, t)
-        //            * amp
-        //            * voice.velocity;
-        //        let idx = start_sample + i;
-        //        if idx < buffer_len {
-        //            mix_buffer[idx] += sample;
-
-        //            // Only count this voice as "active" if it hasn't entered
-        //            // release phase
-        //            if t < voice.duration_secs {
-        //                voice_count[idx] += 1.0;
-        //            }
-        //        }
-        //    }
-        //}
-
-        //// Scale loudness
-        //let mut final_buffer = vec![0.0; buffer_len];
-        //let mut smoothed_gain = 1.0;
-        //let alpha = 0.01;
-        //let mut gain_frozen = false;
-
-        //// TODO this might be too expensive
-        //for i in 0..buffer_len {
-        //    let raw_gain = if voice_count[i] > 0.0 {
-        //        gain_frozen = false;
-        //        1.0 / (voice_count[i] + 1.0).powf(0.8)
-        //    } else if !gain_frozen {
-        //        gain_frozen = true;
-        //        smoothed_gain // Freeze at current level
-        //    } else {
-        //        smoothed_gain // Keep using last smoothed value
-        //    };
-
-        //    smoothed_gain = alpha * raw_gain + (1.0 - alpha) * smoothed_gain;
-        //    final_buffer[i] = mix_buffer[i] * smoothed_gain;
-        //}
-
-        //final_buffer
     }
 }

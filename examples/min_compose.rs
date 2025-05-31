@@ -29,8 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p.add_measure(Some(attr), |m| {
             m.add_metronome("quarter", 150);
             m.add_dynamics("mf");
-            m.add_note("C#2:h~");
-            m.add_note("C#2:q");
+            m.add_note("C4:h~");
+            m.add_note("C4:q");
             m.add_rest("q");
         });
 
@@ -40,6 +40,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         p.add_measure(None, |m| {
             m.add_note("C#2:w");
+        });
+    })?;
+
+    score.add_part("Kick Drum", |p| {
+        p.add_instrument(
+            "Kick",
+            Some(
+                GeneralMidiInstrument::ElectricBassPicked
+                    .program_change_number(),
+            ),
+            Some(MusescoreInstrumentSound::DrumBassdrum.to_id()),
+        );
+        let attr = Attributes::new(AttributesOptions {
+            clefs: vec!["percussion"],
+            ..AttributesOptions::default()
+        });
+
+        p.add_measure(Some(attr), |m| {
+            m.add_metronome("quarter", 150);
+            m.add_dynamics("mf");
+            // For one line clef (percussion) the note on the line
+            // is E4
+            m.add_note("E4:q");
+            m.add_note("E4:q");
+            m.add_note("E4:q");
+            m.add_note("E4:q");
         });
     })?;
 

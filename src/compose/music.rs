@@ -399,14 +399,14 @@ pub fn key_fifths_from_name(name: &str) -> i8 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Clef {
     Treble,
     Bass,
     Alto,
     Soprano,
     Tenor,
-    // TODO Percussion,
+    Percussion,
 }
 
 impl Clef {
@@ -415,13 +415,14 @@ impl Clef {
             Self::Soprano | Self::Alto => "C".to_string(),
             Self::Tenor | Self::Treble => "G".to_string(),
             Self::Bass => "F".to_string(),
+            Self::Percussion => "percussion".to_string(),
         }
     }
 
     pub fn to_line(&self) -> u8 {
         match self {
             Self::Soprano => 1,
-            Self::Treble => 2,
+            Self::Treble | Self::Percussion => 2,
             Self::Alto => 3,
             Self::Tenor | Self::Bass => 4,
         }
@@ -438,6 +439,7 @@ impl std::str::FromStr for Clef {
             "alto" => Ok(Clef::Alto),
             "soprano" => Ok(Clef::Soprano),
             "tenor" => Ok(Clef::Tenor),
+            "percussion" => Ok(Clef::Percussion),
             other => Err(format!("Unknown clef: '{}'", other)),
         }
     }
@@ -485,6 +487,11 @@ impl Default for AttributesOptions<'_> {
 }
 
 #[derive(Clone)]
+pub struct StaffDetails {
+    staff_lines: u8,
+}
+
+#[derive(Clone)]
 pub struct Attributes {
     pub divisions: u32,
     pub key_fifths: i8, // 0 = C major, -1 = F major, 1 = G major
@@ -493,6 +500,7 @@ pub struct Attributes {
     pub time_beat_type: u8, // denominator
     pub clefs: Vec<Clef>,
     pub staves: Option<usize>,
+    pub staff_details: Option<StaffDetails>,
 }
 
 impl Attributes {
@@ -503,6 +511,10 @@ impl Attributes {
         }
         let clefs = opt.clefs.iter().map(|c| c.parse().unwrap()).collect();
         let time_sig: TimeSignature = opt.time_sig.parse().unwrap();
+        let mut staff_details = None;
+        if opt.clefs.len() == 1 && opt.clefs[0] == "percussion" {
+            staff_details = Some(StaffDetails { staff_lines: 1 });
+        }
 
         Self {
             // TODO divisions are hard coded to be 480. Add more flexibility
@@ -514,6 +526,7 @@ impl Attributes {
             time_beat_type: time_sig.denominator,
             staves,
             clefs,
+            staff_details,
         }
     }
 
@@ -552,6 +565,12 @@ impl Attributes {
         // Check if this is my impl issue or musescores.
         if let Some(staves) = &self.staves {
             w.text_element("staves", &staves.to_string())?;
+        }
+
+        if let Some(details) = &self.staff_details {
+            w.open_tag("staff-details", None)?;
+            w.text_element("staff-lines", &details.staff_lines.to_string())?;
+            w.close_tag("staff-details")?;
         }
 
         w.close_tag("attributes")?;
@@ -717,6 +736,18 @@ impl Measure {
                 .as_ref()
                 .expect("Effective attributes must be set")
         });
+
+        // Check if the note should be unpitched. If so, convert the pitch
+        // to an unpitched with the same tone and octave (ignoring alter).
+        if attr.clefs[0] == Clef::Percussion {
+            if let Some(pitch) = note.pitch {
+                note.unpitched = Some(Unpitched {
+                    display_step: pitch.step,
+                    display_octave: pitch.octave,
+                });
+                note.pitch = None;
+            }
+        }
 
         // Support only 1 or 2 staves for now. I'm not sure if more than 2 staves
         // in a part is common enough to change.
@@ -1119,9 +1150,15 @@ impl TimeModification {
     }
 }
 
+pub struct Unpitched {
+    display_step: NaturalTone,
+    display_octave: i8,
+}
+
 pub struct Note {
     kind: NoteType,
     pub pitch: Option<Pitch>,
+    pub unpitched: Option<Unpitched>,
     pub is_chord: bool,
     pub duration: u32,
     staff: Option<u8>,
@@ -1138,6 +1175,7 @@ pub struct NoteOptions {
     pub divisions: u32,
     pub is_chord: bool,
     pub pitch: Option<Pitch>,
+    pub unpitched: Option<Unpitched>,
     pub staff: Option<u8>,
     pub voice: Option<u8>,
     pub time_mod: Option<TimeModification>,
@@ -1158,6 +1196,7 @@ impl Default for NoteOptions {
         Self {
             kind: NoteType::Quarter,
             pitch: None,
+            unpitched: None,
             divisions: 480,
             is_chord: false,
             staff: None,
@@ -1241,6 +1280,7 @@ impl Note {
         Self {
             kind: opt.kind.clone(),
             pitch: opt.pitch,
+            unpitched: opt.unpitched,
             is_chord: opt.is_chord,
             duration,
             staff: opt.staff,
@@ -1265,8 +1305,23 @@ impl Note {
         if self.is_chord {
             writer.self_closing_tag("chord", None)?;
         }
+
+        // TODO there should never be the case where there is a pitch and
+        // unpitched in the same note element. Currently left to the user to
+        // not do this.
         if let Some(pitch) = &self.pitch {
             pitch.write_to(writer)?;
+        } else if let Some(unpitched) = &self.unpitched {
+            writer.open_tag("unpitched", None)?;
+            writer.text_element(
+                "display-step",
+                &unpitched.display_step.to_char().to_string(),
+            )?;
+            writer.text_element(
+                "display-octave",
+                &unpitched.display_octave.to_string(),
+            )?;
+            writer.close_tag("unpitched")?;
         } else {
             let rest_attrs = if self.is_measure_rest {
                 Some(xml::XmlAttributes::new(vec![("measure", "yes")]))
@@ -1275,6 +1330,7 @@ impl Note {
             };
             writer.self_closing_tag("rest", rest_attrs)?;
         }
+
         writer.text_element("duration", &self.duration.to_string())?;
 
         if !self.is_measure_rest {
