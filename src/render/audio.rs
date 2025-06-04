@@ -2,34 +2,73 @@ use crate::compose::{DirectionType, MeasureItem, Part, Pitch, StartStop};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
-pub struct RenderContext {
-    pub sample_rate: usize,
-}
+/// Sample buffers in the render layer have double float precision
+type Float = f64;
 
 pub trait Instrument {
     /// Renders a MusicXML part
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64>;
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float>;
 }
 
 pub trait Envelope: Send + Sync {
-    fn amplitude(&self, t: f64, note_duration: f64) -> f64;
+    /// Returns a value from the envelope based on current time.
+    fn value(&self, t: Float, duration: Float) -> Float;
 
-    /// The release time of the envelope will extend the notated duration of
-    /// a given note. This function provides this extra time to the renderer
-    /// for proper duration calculations.
-    fn release_time(&self) -> f64;
+    /// If the user needs to know how long the release will last.
+    fn release_time(&self) -> Float;
+}
+
+pub struct ParametricDecayEnvelope {
+    pub start: Float,
+    pub end: Float,
+    pub exponent: Float, // 1.0 = linear, >1 = exponential, <1 = log-like
+}
+
+impl Envelope for ParametricDecayEnvelope {
+    fn value(&self, t: Float, duration: Float) -> Float {
+        assert!(
+            self.start != self.end,
+            "Start and end values of envelope cannot
+            be equal"
+        );
+        assert!(
+            self.end < self.start,
+            "Start time has to be before end time in decay envelope"
+        );
+
+        if t >= duration {
+            return self.end;
+        }
+
+        let progress = t / duration;
+        let shaped = (1.0 - progress).powf(self.exponent);
+        let start = self.start;
+        let end = self.end;
+        end + (start - end) * shaped
+    }
+
+    fn release_time(&self) -> Float {
+        0.0
+    }
+}
+
+impl ParametricDecayEnvelope {
+    fn reaches_threshold(&self, duration: Float, threshold: Float) -> bool {
+        let end_val = self.value(duration, duration);
+        (end_val - self.end).abs() <= threshold
+    }
 }
 
 /// Duration represented in seconds.
 pub struct ADSR {
-    pub attack: f64,
-    pub decay: f64,
-    pub sustain: f64, // 0.0 - 1.0 value representing % of max volume
-    pub release: f64,
+    pub attack: Float,
+    pub decay: Float,
+    pub sustain: Float, // 0.0 - 1.0 value representing % of max volume
+    pub release: Float,
 }
 
 impl Envelope for ADSR {
-    fn amplitude(&self, t: f64, note_duration: f64) -> f64 {
+    fn value(&self, t: Float, note_duration: Float) -> Float {
         let release_start = note_duration;
         let end_time = release_start + self.release;
 
@@ -48,17 +87,32 @@ impl Envelope for ADSR {
         }
     }
 
-    fn release_time(&self) -> f64 {
+    fn release_time(&self) -> Float {
         self.release
     }
 }
 
+impl ADSR {
+    /// The release time of the envelope will extend the notated duration of
+    /// a given note. This function provides this extra time to the renderer
+    /// for proper duration calculations.
+    fn release_time(&self) -> Float {
+        self.release
+    }
+}
+
+pub struct RenderContext {
+    pub sample_rate: usize,
+}
+
 pub struct RenderState {
-    pub time_beats: f64,
-    pub tempo_bpm: f64,
-    pub velocity: f64,
+    pub time_beats: Float,
+    pub tempo_bpm: Float,
+    pub velocity: Float,
     pub divisions: u32,
     pub active_voices: Vec<Voice>,
+    // Pitch => (start_time_beats, total_duration_beats)
+    pub ongoing_ties: HashMap<u8, (Float, Float)>,
 }
 
 impl Default for RenderState {
@@ -69,26 +123,27 @@ impl Default for RenderState {
             velocity: 80.0 / 127.0, // mf
             divisions: 480,
             active_voices: vec![],
+            ongoing_ties: HashMap::new(),
         }
     }
 }
 
 impl RenderState {
-    pub fn seconds_per_beat(&self) -> f64 {
+    pub fn seconds_per_beat(&self) -> Float {
         60.0 / self.tempo_bpm
     }
 
-    pub fn time_secs(&self) -> f64 {
+    pub fn time_secs(&self) -> Float {
         self.time_beats * self.seconds_per_beat()
     }
 
     pub fn advance(&mut self, duration_divs: u32) {
-        let duration_beats = duration_divs as f64 / self.divisions as f64;
+        let duration_beats = duration_divs as Float / self.divisions as Float;
         self.time_beats += duration_beats;
     }
 
     pub fn rewind(&mut self, duration_divs: u32) {
-        let duration_beats = duration_divs as f64 / self.divisions as f64;
+        let duration_beats = duration_divs as Float / self.divisions as Float;
         self.time_beats -= duration_beats;
     }
 }
@@ -102,7 +157,7 @@ pub enum OscillatorType {
 }
 
 impl OscillatorType {
-    pub fn sample(&self, freq: f64, t: f64) -> f64 {
+    pub fn sample(&self, freq: Float, t: Float) -> Float {
         let phase = 2.0 * PI * freq * t;
         match self {
             Self::Sine => phase.sin(),
@@ -122,24 +177,23 @@ impl OscillatorType {
 }
 
 pub struct Voice {
-    pub freq: f64,
-    pub start_time_secs: f64,
-    pub duration_secs: f64,
-    pub velocity: f64,
+    pub freq: Float,
+    pub start_time_secs: Float,
+    pub duration_secs: Float,
+    pub velocity: Float,
 }
 
 // INSTRUMENTS
 
 pub struct Synth {
     pub oscillator: OscillatorType,
-    pub envelope: Box<dyn Envelope>,
+    // TODO make envelope choice more flexible
+    pub envelope: ADSR,
 }
 
 impl Instrument for Synth {
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64> {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut state = RenderState::default();
-        let mut ongoing_ties: HashMap<u8, (f64, f64)> = HashMap::new();
-        // Pitch => (start_time_beats, total_duration_beats)
 
         for measure in &part.measures {
             let mut last_start_time_beats = state.time_beats;
@@ -154,8 +208,8 @@ impl Instrument for Synth {
                         if let Some(pitch) = &note.pitch {
                             let freq = pitch.to_frequency();
                             let midi = pitch.to_semitone();
-                            let duration_beats =
-                                note.duration as f64 / state.divisions as f64;
+                            let duration_beats = note.duration as Float
+                                / state.divisions as Float;
                             let duration_secs =
                                 duration_beats * state.seconds_per_beat();
                             let start_time_secs = last_start_time_beats
@@ -163,14 +217,14 @@ impl Instrument for Synth {
 
                             match note.tie {
                                 Some(StartStop::Start) => {
-                                    ongoing_ties.insert(
+                                    state.ongoing_ties.insert(
                                         midi,
                                         (start_time_secs, duration_secs),
                                     );
                                 }
                                 Some(StartStop::Stop) => {
                                     if let Some((prev_start, prev_duration)) =
-                                        ongoing_ties.remove(&midi)
+                                        state.ongoing_ties.remove(&midi)
                                     {
                                         let combined_duration =
                                             prev_duration + duration_secs;
@@ -212,7 +266,7 @@ impl Instrument for Synth {
 
                     MeasureItem::Direction(dir) => match &dir.kind {
                         DirectionType::Metronome { per_minute, .. } => {
-                            state.tempo_bpm = *per_minute as f64;
+                            state.tempo_bpm = *per_minute as Float;
                         }
                         DirectionType::Dynamics(dynamics) => {
                             state.velocity = dynamics.normalized_velocity();
@@ -233,20 +287,21 @@ impl Instrument for Synth {
         }
 
         let buffer_len = ctx.sample_rate * 60;
-        let mut mix_buffer: Vec<f64> = vec![0.0; buffer_len];
-        let mut loudness_sum: Vec<f64> = vec![0.0; buffer_len];
+        let mut mix_buffer: Vec<Float> = vec![0.0; buffer_len];
+        let mut loudness_sum: Vec<Float> = vec![0.0; buffer_len];
 
         for voice in &state.active_voices {
             let full_duration_secs =
                 voice.duration_secs + self.envelope.release_time();
-            let start_sample = (voice.start_time_secs * ctx.sample_rate as f64)
+            let start_sample = (voice.start_time_secs
+                * ctx.sample_rate as Float)
                 .round() as usize;
-            let num_samples =
-                (full_duration_secs * ctx.sample_rate as f64).round() as usize;
+            let num_samples = (full_duration_secs * ctx.sample_rate as Float)
+                .round() as usize;
 
             for i in 0..num_samples {
-                let t = i as f64 / ctx.sample_rate as f64;
-                let amp = self.envelope.amplitude(t, voice.duration_secs);
+                let t = i as Float / ctx.sample_rate as Float;
+                let amp = self.envelope.value(t, voice.duration_secs);
                 let sample = self.oscillator.sample(voice.freq, t)
                     * amp
                     * voice.velocity;
@@ -280,5 +335,78 @@ impl Instrument for Synth {
         }
 
         final_buffer
+    }
+}
+
+pub struct Distortion {
+    pub drive: Float,
+}
+
+impl Distortion {
+    pub fn apply(&self, sample: Float) -> Float {
+        // Soft clipping
+        (sample * self.drive).tanh()
+    }
+}
+
+pub struct Transient {
+    pub duration: Float,
+    pub amplitude: Float,
+    pub freq: Float, // for sine or tone-based clicks
+}
+
+impl Transient {
+    pub fn sample(&self, t: Float) -> Float {
+        if t >= self.duration {
+            0.0
+        } else {
+            (2.0 * PI * self.freq * t).sin() * self.amplitude
+        }
+    }
+}
+
+pub struct KickDrum {
+    pub amp_env: ParametricDecayEnvelope,
+    pub freq_env: ParametricDecayEnvelope,
+    pub distortion: Option<Distortion>,
+    pub transient: Option<Transient>,
+}
+
+impl Instrument for KickDrum {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        let sample_rate = ctx.sample_rate as Float;
+        let mut output = Vec::new();
+        let state = RenderState::default();
+
+        for measure in &part.measures {
+            for item in &measure.items {
+                if let MeasureItem::Note(note) = item {
+                    let duration_beats =
+                        note.duration as Float / state.divisions as Float;
+                    let duration_secs =
+                        duration_beats * state.seconds_per_beat();
+
+                    let total_samples =
+                        (duration_secs * sample_rate).ceil() as usize;
+
+                    for i in 0..total_samples {
+                        let t = i as Float / sample_rate;
+                        let amp = self.amp_env.value(t, duration_secs);
+                        let freq = self.freq_env.value(t, duration_secs);
+                        let sample = (2.0 * PI * freq * t).sin() * amp;
+                        let processed_sample =
+                            if let Some(distortion) = &self.distortion {
+                                distortion.apply(sample)
+                            } else {
+                                sample
+                            };
+
+                        output.push(processed_sample);
+                    }
+                }
+            }
+        }
+
+        output
     }
 }
