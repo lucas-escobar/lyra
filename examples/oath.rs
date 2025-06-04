@@ -70,6 +70,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p.add_measure(None, |m| {
             m.add_note("B2:w");
         });
+
+        p.add_measure(None, |m| {
+            m.add_note("A#2:w");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("A2:w");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_note("A2:w");
+        });
     })?;
 
     score.add_part("Piano", |p| {
@@ -129,6 +141,94 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.add_note("D5:e");
             m.add_note("G5:e");
         });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("E3:e");
+            m.add_note("Bb3:e");
+            m.add_note("D4:e");
+            m.add_note("G4:e");
+            m.add_note("Bb4:e");
+            m.add_note("D5:e");
+            m.add_note("G5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("A3:e");
+            m.add_note("Db4:e");
+            m.add_note("E4:e");
+            m.add_note("G4:e");
+            m.add_note("Db5:e");
+            m.add_note("E5:e");
+            m.add_note("G5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("D3:e");
+            m.add_note("A3:e");
+            m.add_note("D4:e");
+            m.add_note("F4:e");
+            m.add_note("A4:e");
+            m.add_note("D5:e");
+            m.add_note("F5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("D3:e");
+            m.add_note("A3:e");
+            m.add_note("D4:e");
+            m.add_note("F4:e");
+            m.add_note("A4:e");
+            m.add_note("D5:e");
+            m.add_note("F5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("D3:e");
+            m.add_note("B3:e");
+            m.add_note("D4:e");
+            m.add_note("G4:e");
+            m.add_note("B4:e");
+            m.add_note("D5:e");
+            m.add_note("G5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("D3:e");
+            m.add_note("A3:e");
+            m.add_note("D4:e");
+            m.add_note("F4:e");
+            m.add_note("A4:e");
+            m.add_note("D5:e");
+            m.add_note("F5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("D3:e");
+            m.add_note("A3:e");
+            m.add_note("D4:e");
+            m.add_note("F4:e");
+            m.add_note("A4:e");
+            m.add_note("D5:e");
+            m.add_note("F5:e");
+        });
+
+        p.add_measure(None, |m| {
+            m.add_rest("e");
+            m.add_note("E3:e");
+            m.add_note("G3:e");
+            m.add_note("Db4:e");
+            m.add_note("E4:e");
+            m.add_note("G4:e");
+            m.add_note("Db5:e");
+            m.add_note("G5:e");
+        });
     })?;
 
     let synth_saw = Synth {
@@ -150,7 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         effects: Some(vec![
             Box::new(GainEffect { gain: 1.0 }),
             Box::new(PanEffect { pan: 0.8 }),
-            Box::new(LowPassFilter::new(750.0)),
+            Box::new(LowPassFilter::new(550.0)),
         ]),
     };
 
@@ -182,13 +282,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(&out_buf.right),
         context.sample_rate as u32,
         output_path,
-    );
-
-    save_to_wav(
-        &synth_sine.render_part(&score.parts[0], &context),
-        None,
-        context.sample_rate as u32,
-        Path::new("output/oath_to_order_bass.wav"),
     );
 
     Ok(())
