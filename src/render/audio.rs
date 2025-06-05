@@ -141,6 +141,19 @@ impl RenderState {
         self.time_beats * self.seconds_per_beat()
     }
 
+    /// Convert a duration in ticks to a duration in samples
+    pub fn ticks_to_samples(&self, duration: u32, sample_rate: u32) -> usize {
+        let dur_beats = duration as Float / self.divisions as Float;
+        let dur_sec = dur_beats * self.seconds_per_beat();
+        (dur_sec * sample_rate as Float).ceil() as usize
+    }
+
+    /// Convert a duration in ticks to a duration in samples
+    pub fn ticks_to_secs(&self, duration: u32) -> Float {
+        let dur_beats = duration as Float / self.divisions as Float;
+        dur_beats * self.seconds_per_beat()
+    }
+
     pub fn advance(&mut self, duration_divs: u32) {
         let duration_beats = duration_divs as Float / self.divisions as Float;
         self.time_beats += duration_beats;
@@ -381,44 +394,34 @@ pub struct KickDrum {
 
 impl Instrument for KickDrum {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let sample_rate = ctx.sample_rate as Float;
         let mut output = Vec::new();
         let mut state = RenderState::default();
+        let sr = ctx.sample_rate;
 
-        for measure in &part.measures {
-            for item in &measure.items {
+        for m in &part.measures {
+            for item in &m.items {
                 if let MeasureItem::Note(note) = item {
-                    let duration_beats =
-                        note.duration as Float / state.divisions as Float;
-                    let duration_secs =
-                        duration_beats * state.seconds_per_beat();
+                    let dur = state.ticks_to_secs(note.duration);
+                    let n = state.ticks_to_samples(note.duration, sr);
 
-                    let total_samples =
-                        (duration_secs * sample_rate).ceil() as usize;
-
-                    let start_time_secs =
-                        state.time_beats * state.seconds_per_beat();
                     let start_sample =
-                        (start_time_secs * sample_rate).round() as usize;
+                        (state.time_secs() * sr as Float).floor() as usize;
 
                     // Ensure output is large enough
-                    if output.len() < start_sample + total_samples {
-                        output.resize(start_sample + total_samples, 0.0);
+                    if output.len() < start_sample + n {
+                        output.resize(start_sample + n, 0.0);
                     }
 
-                    for i in 0..total_samples {
-                        let t = i as Float / sample_rate;
-                        let amp = self.amp_env.value(t, duration_secs);
-                        let freq = self.freq_env.value(t, duration_secs);
-                        let sample = (2.0 * PI * freq * t).sin() * amp;
-                        let processed_sample =
-                            if let Some(distortion) = &self.distortion {
-                                distortion.apply(sample)
-                            } else {
-                                sample
-                            };
-                        output[start_sample + i] +=
-                            processed_sample.clamp(-1.0, 1.0);
+                    for i in 0..n {
+                        let t = i as Float / sr as Float;
+                        let amp = self.amp_env.value(t, dur);
+                        let freq = self.freq_env.value(t, dur);
+                        let mut sample =
+                            OscillatorType::Sine.sample(freq, t) * amp;
+                        if let Some(d) = &self.distortion {
+                            sample = d.apply(sample)
+                        };
+                        output[start_sample + i] += sample.clamp(-1.0, 1.0);
                     }
                     state.advance(note.duration);
                 }
