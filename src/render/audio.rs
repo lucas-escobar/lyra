@@ -2,6 +2,10 @@ use crate::compose::{DirectionType, MeasureItem, Part, Pitch, StartStop};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
+use rand::rngs::StdRng;
+use rand::Rng;
+use rand::SeedableRng;
+
 /// Sample buffers in the render layer have double float precision
 type Float = f64;
 
@@ -102,7 +106,7 @@ impl ADSR {
 }
 
 pub struct RenderContext {
-    pub sample_rate: usize,
+    pub sample_rate: u32,
 }
 
 pub struct RenderState {
@@ -286,7 +290,10 @@ impl Instrument for Synth {
             }
         }
 
-        let buffer_len = ctx.sample_rate * 60;
+        // TODO calculate precice buffer len
+        let buffer_len: usize = (ctx.sample_rate * 60) as usize;
+
+        // TODO should these be fixed sized arrays?
         let mut mix_buffer: Vec<Float> = vec![0.0; buffer_len];
         let mut loudness_sum: Vec<Float> = vec![0.0; buffer_len];
 
@@ -376,7 +383,7 @@ impl Instrument for KickDrum {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let sample_rate = ctx.sample_rate as Float;
         let mut output = Vec::new();
-        let state = RenderState::default();
+        let mut state = RenderState::default();
 
         for measure in &part.measures {
             for item in &measure.items {
@@ -389,6 +396,16 @@ impl Instrument for KickDrum {
                     let total_samples =
                         (duration_secs * sample_rate).ceil() as usize;
 
+                    let start_time_secs =
+                        state.time_beats * state.seconds_per_beat();
+                    let start_sample =
+                        (start_time_secs * sample_rate).round() as usize;
+
+                    // Ensure output is large enough
+                    if output.len() < start_sample + total_samples {
+                        output.resize(start_sample + total_samples, 0.0);
+                    }
+
                     for i in 0..total_samples {
                         let t = i as Float / sample_rate;
                         let amp = self.amp_env.value(t, duration_secs);
@@ -400,9 +417,140 @@ impl Instrument for KickDrum {
                             } else {
                                 sample
                             };
-
-                        output.push(processed_sample);
+                        output[start_sample + i] +=
+                            processed_sample.clamp(-1.0, 1.0);
                     }
+                    state.advance(note.duration);
+                }
+            }
+        }
+
+        output
+    }
+}
+
+pub struct SnareDrum {
+    pub amp_env: ParametricDecayEnvelope,
+    pub noise_env: ParametricDecayEnvelope,
+    pub tone_env: Option<ParametricDecayEnvelope>,
+    pub freq: Option<Float>, // optional tonal frequency
+    pub distortion: Option<Distortion>,
+    pub transient: Option<Transient>,
+}
+
+impl Instrument for SnareDrum {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        let sample_rate = ctx.sample_rate as Float;
+        let mut output = Vec::new();
+        let mut state = RenderState::default();
+
+        let mut rng = StdRng::seed_from_u64(42); // deterministic noise
+
+        for measure in &part.measures {
+            for item in &measure.items {
+                if let MeasureItem::Note(note) = item {
+                    if note.unpitched.is_some() {
+                        let duration_beats =
+                            note.duration as Float / state.divisions as Float;
+                        let duration_secs =
+                            duration_beats * state.seconds_per_beat();
+
+                        let total_samples =
+                            (duration_secs * sample_rate).ceil() as usize;
+
+                        let start_time_secs =
+                            state.time_beats * state.seconds_per_beat();
+                        let start_sample =
+                            (start_time_secs * sample_rate).round() as usize;
+
+                        // Ensure output is large enough
+                        if output.len() < start_sample + total_samples {
+                            output.resize(start_sample + total_samples, 0.0);
+                        }
+
+                        for i in 0..total_samples {
+                            let t = i as Float / sample_rate;
+
+                            let amp = self.amp_env.value(t, duration_secs);
+                            let noise_amp =
+                                self.noise_env.value(t, duration_secs);
+                            let noise_sample: Float =
+                                rng.random_range(-1.0..1.0);
+
+                            let tonal_sample = if let (Some(freq), Some(env)) =
+                                (self.freq, &self.tone_env)
+                            {
+                                let tone_amp = env.value(t, duration_secs);
+                                (2.0 * PI * freq * t).sin() * tone_amp
+                            } else {
+                                0.0
+                            };
+
+                            let mut sample =
+                                (noise_sample * noise_amp) + tonal_sample;
+                            sample *= amp;
+
+                            let processed_sample =
+                                if let Some(distortion) = &self.distortion {
+                                    distortion.apply(sample)
+                                } else {
+                                    sample
+                                };
+                            output[start_sample + i] +=
+                                processed_sample.clamp(-1.0, 1.0);
+                        }
+                    }
+
+                    state.advance(note.duration);
+                }
+            }
+        }
+
+        output
+    }
+}
+
+pub struct HiHat {
+    pub amp_env: ParametricDecayEnvelope,
+}
+
+impl Instrument for HiHat {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        let sample_rate = ctx.sample_rate as Float;
+        let mut output = Vec::new();
+        let mut state = RenderState::default();
+
+        let mut rng = StdRng::seed_from_u64(12345); // deterministic noise for reproducibility
+
+        for measure in &part.measures {
+            for item in &measure.items {
+                if let MeasureItem::Note(note) = item {
+                    let duration_beats =
+                        note.duration as Float / state.divisions as Float;
+                    let duration_secs =
+                        duration_beats * state.seconds_per_beat();
+
+                    let total_samples =
+                        (duration_secs * sample_rate).ceil() as usize;
+
+                    let start_time_secs =
+                        state.time_beats * state.seconds_per_beat();
+                    let start_sample =
+                        (start_time_secs * sample_rate).round() as usize;
+
+                    // Ensure output is large enough
+                    if output.len() < start_sample + total_samples {
+                        output.resize(start_sample + total_samples, 0.0);
+                    }
+                    for i in 0..total_samples {
+                        let t = i as Float / sample_rate;
+                        let amp = self.amp_env.value(t, duration_secs);
+                        let noise = rng.random_range(-1.0..1.0); // white noise
+                        let sample = noise * amp;
+                        output[start_sample + i] += sample.clamp(-1.0, 1.0);
+                    }
+
+                    state.advance(note.duration);
                 }
             }
         }

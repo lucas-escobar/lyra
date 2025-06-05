@@ -42,12 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let synth = Synth {
         oscillator: OscillatorType::Sine,
-        envelope: Box::new(ADSR {
-            attack: 0.1,
-            decay: 0.2,
-            sustain: 0.8,
-            release: 0.2,
-        }),
+        envelope: ADSR { attack: 0.1, decay: 0.2, sustain: 0.8, release: 0.2 },
     };
 
     let context = RenderContext { sample_rate: 44100 * 2 };

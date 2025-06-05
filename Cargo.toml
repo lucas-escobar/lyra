@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # WAV encode/decode 
 hound = "3"
-nom = "8"
-serde = { version = "1", features = ["derive"]}
+rand = "0.9"
+#nom = "8"
+#serde = { version = "1", features = ["derive"]}
 

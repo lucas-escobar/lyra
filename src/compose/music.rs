@@ -772,10 +772,7 @@ impl Measure {
     /// See NoteType::from_char() for all duration chars
     pub fn add_rest(&mut self, rest: &str) {
         let parts: Vec<&str> = rest.split(':').collect();
-        assert!(
-            parts.len() == 1,
-            "add_note requires a pitch:duration notation"
-        );
+        assert!(parts.len() == 1, "add_rest requires a duration notation");
         self.add_item(MeasureItem::Note(Note::new(rest.parse().unwrap())));
     }
 

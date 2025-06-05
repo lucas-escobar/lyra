@@ -5,7 +5,7 @@ pub trait AudioEffect {
         &mut self,
         left: &mut [f64],
         right: &mut [f64],
-        sample_rate: f64,
+        sample_rate: u32,
     );
 }
 
@@ -46,7 +46,7 @@ pub struct Track {
 }
 
 impl Track {
-    pub fn process(&mut self, sample_rate: f64) {
+    pub fn process(&mut self, sample_rate: u32) {
         if let Some(effects) = &mut self.effects {
             for e in effects {
                 e.process(
@@ -69,7 +69,7 @@ impl AudioEffect for GainEffect {
         &mut self,
         left: &mut [f64],
         right: &mut [f64],
-        _sample_rate: f64,
+        _sample_rate: u32,
     ) {
         for i in 0..left.len() {
             left[i] *= self.gain;
@@ -88,7 +88,7 @@ impl AudioEffect for PanEffect {
         &mut self,
         left: &mut [f64],
         right: &mut [f64],
-        _sample_rate: f64,
+        _sample_rate: u32,
     ) {
         let pan = self.pan.clamp(-1.0, 1.0);
         let left_gain = (1.0 - pan).sqrt() * 0.707;
@@ -118,10 +118,10 @@ impl AudioEffect for LowPassFilter {
         &mut self,
         left: &mut [f64],
         right: &mut [f64],
-        sample_rate: f64,
+        sample_rate: u32,
     ) {
         let rc = 1.0 / (2.0 * PI * self.cutoff);
-        let dt = 1.0 / sample_rate;
+        let dt = 1.0 / sample_rate as f64;
         let alpha = dt / (rc + dt);
 
         for i in 0..left.len() {
@@ -143,7 +143,7 @@ impl AudioEffect for SaturationEffect {
         &mut self,
         left: &mut [f64],
         right: &mut [f64],
-        _sample_rate: f64,
+        _sample_rate: u32,
     ) {
         for i in 0..left.len() {
             left[i] = (self.drive * left[i]).tanh();
@@ -159,7 +159,7 @@ pub struct Processor {
 }
 
 impl Processor {
-    pub fn process(&mut self, sample_rate: f64) -> StereoBuffer {
+    pub fn process(&mut self, sample_rate: u32) -> StereoBuffer {
         let mut mix = StereoBuffer::new(self.tracks[0].buffer.len());
 
         for track in &mut self.tracks {
