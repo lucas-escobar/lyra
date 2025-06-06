@@ -1,4 +1,4 @@
-use lyra::compose::{Attributes, AttributesOptions, Score, ScoreOptions};
+use lyra::compose::{Attributes, AttributesCreateInfo, Score, ScoreCreateInfo};
 use lyra::process::{
     GainEffect, LowPassFilter, PanEffect, Processor, StereoBuffer, Track,
 };
@@ -11,62 +11,62 @@ use std::fs::create_dir_all;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut score = Score::new(ScoreOptions {
+    let mut score = Score::new(ScoreCreateInfo {
         title: "Drum Track",
         composer: "Lucas Escobar",
         arranger: "Lucas Escobar",
         source: None,
     });
 
-    score.add_part("Kick", |p| {
-        let attr = Attributes::new(AttributesOptions {
+    score.part("Kick", |p| {
+        let attr = Attributes::new(AttributesCreateInfo {
             clefs: vec!["percussion"],
-            ..AttributesOptions::default()
+            ..AttributesCreateInfo::default()
         });
 
-        p.add_measure(Some(attr), |m| {
-            m.add_metronome("quarter", 90);
-            m.add_dynamics("mf");
-            m.add_note("E4:q");
-            m.add_note("E4:q");
-            m.add_note("E4:q");
-            m.add_note("E4:q");
+        p.measure(Some(attr), |m| {
+            m.metronome("quarter", 90);
+            m.dynamics("mf");
+            m.note("E4:q");
+            m.note("E4:q");
+            m.note("E4:q");
+            m.note("E4:q");
         });
     })?;
 
-    score.add_part("Snare", |p| {
-        let attr = Attributes::new(AttributesOptions {
+    score.part("Snare", |p| {
+        let attr = Attributes::new(AttributesCreateInfo {
             clefs: vec!["percussion"],
-            ..AttributesOptions::default()
+            ..AttributesCreateInfo::default()
         });
 
-        p.add_measure(Some(attr), |m| {
-            m.add_metronome("quarter", 90);
-            m.add_dynamics("mf");
-            m.add_rest("q");
-            m.add_note("E4:q");
-            m.add_rest("q");
-            m.add_note("E4:q");
+        p.measure(Some(attr), |m| {
+            m.metronome("quarter", 90);
+            m.dynamics("mf");
+            m.rest("q");
+            m.note("E4:q");
+            m.rest("q");
+            m.note("E4:q");
         });
     })?;
 
-    score.add_part("High Hat", |p| {
-        let attr = Attributes::new(AttributesOptions {
+    score.part("High Hat", |p| {
+        let attr = Attributes::new(AttributesCreateInfo {
             clefs: vec!["percussion"],
-            ..AttributesOptions::default()
+            ..AttributesCreateInfo::default()
         });
 
-        p.add_measure(Some(attr), |m| {
-            m.add_metronome("quarter", 90);
-            m.add_dynamics("mf");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
-            m.add_note("E4:e");
+        p.measure(Some(attr), |m| {
+            m.metronome("quarter", 90);
+            m.dynamics("mf");
+            m.note("E4:e");
+            m.note("E4:e");
+            m.note("E4:e");
+            m.note("E4:e");
+            m.note("E4:e");
+            m.note("E4:e");
+            m.note("E4:e");
+            m.note("E4:e");
         });
     })?;
 

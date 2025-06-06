@@ -18,7 +18,7 @@ pub struct Score {
     source: String,
 }
 
-pub struct ScoreOptions<'a> {
+pub struct ScoreCreateInfo<'a> {
     pub title: &'a str,
     pub composer: &'a str,
     pub arranger: &'a str,
@@ -26,7 +26,7 @@ pub struct ScoreOptions<'a> {
 }
 
 impl Score {
-    pub fn new(opt: ScoreOptions) -> Self {
+    pub fn new(opt: ScoreCreateInfo) -> Self {
         Self {
             parts: Vec::new(),
             work_title: opt.title.to_string(),
@@ -46,7 +46,7 @@ impl Score {
         for p in &mut self.parts {
             let missing = max - p.measures.len();
             for _ in 0..missing {
-                p.add_empty_measure();
+                p.empty_measure();
             }
         }
     }
@@ -111,7 +111,7 @@ impl Score {
         Ok(())
     }
 
-    pub fn add_part<F>(
+    pub fn part<F>(
         &mut self,
         name: &str,
         build: F,
@@ -130,9 +130,9 @@ impl Score {
 
 pub struct Part {
     pub measures: Vec<Measure>,
-    id: String,
+    pub id: String,
     name: String,
-    instrument: Option<CombinedInstrument>,
+    instrument: Option<MusicXmlInstrument>,
 
     /// For measures (and notes) to have reference to the most recently defined
     /// <attributes>, this value is updated on measure creation if the measure
@@ -239,10 +239,11 @@ impl Part {
         Ok(())
     }
 
-    pub fn add_measure<F>(&mut self, attributes: Option<Attributes>, f: F)
+    pub fn measure<F>(&mut self, f: F)
     where
         F: FnOnce(&mut Measure),
     {
+        self.attributes()
         // Update the effective attributes at the part level
         if let Some(attr) = attributes.clone() {
             self.effective_attributes = Some(attr);
@@ -258,7 +259,7 @@ impl Part {
     }
 
     // TODO allow optional attributes so empty measures can be prepended to part
-    pub fn add_empty_measure(&mut self) {
+    pub fn empty_measure(&mut self) {
         let attrs = self
             .get_current_attr()
             .expect("Cannot add empty measure: no previous attributes found");
@@ -268,18 +269,18 @@ impl Part {
         let beat_ticks = (attrs.divisions as f32 * beat_unit_ratio) as u32;
         let total_divisions = attrs.time_beats as u32 * beat_ticks;
 
-        let rest = Note::new(NoteOptions {
+        let rest = Note::new(NoteCreateInfo {
             pitch: None,
             kind: NoteType::Whole, // not used
             is_measure_rest: true,
             duration_override: Some(total_divisions),
-            ..NoteOptions::default()
+            ..NoteCreateInfo::default()
         });
 
         let number = self.measures.len() + 1;
         let mut measure =
             Measure::new(number, None, self.effective_attributes.clone());
-        measure.add_item(MeasureItem::Note(rest));
+        measure.item(MeasureItem::Note(rest));
         self.measures.push(measure);
     }
 
@@ -301,27 +302,21 @@ impl Part {
     ///
     /// Many options in both instrument elements are missing from this
     /// convenience function.
-    pub fn add_instrument(
+    pub fn instrument(
         &mut self,
-        name: &str,
-        midi_program: Option<u8>,
-        sound: Option<String>,
+        ci: MusicXmlInstrumentCreateInfo,
+        //name: &str,
+        //midi_program: Option<u8>,
+        //sound: Option<String>,
     ) {
         // TODO only supports one instrument per part currently
-        let id = format!("P{}-I{}", self.id, 1);
-        self.instrument = Some(CombinedInstrument {
-            midi: MidiInstrument {
-                id: id.clone(),
-                program: midi_program,
-                ..MidiInstrument::default()
-            },
-            score: ScoreInstrument {
-                id,
-                name: name.into(),
-                sound,
-                ..ScoreInstrument::default()
-            },
-        })
+        self.instrument =
+            Some(MusicXmlInstrument::new(MusicXmlInstrumentCreateInfo {
+                id: Some(format!("{}-I{}", self.id, 1)),
+                name: ci.name,
+                midi_program: ci.midi_program,
+                sound: ci.sound,
+            }));
     }
 }
 
@@ -468,14 +463,14 @@ impl std::str::FromStr for TimeSignature {
     }
 }
 
-pub struct AttributesOptions<'a> {
+pub struct AttributesCreateInfo<'a> {
     pub key_name: &'a str,
     pub key_mode: &'a str,
     pub time_sig: &'a str,
     pub clefs: Vec<&'a str>,
 }
 
-impl Default for AttributesOptions<'_> {
+impl Default for AttributesCreateInfo<'_> {
     fn default() -> Self {
         Self {
             key_name: "C",
@@ -504,15 +499,15 @@ pub struct Attributes {
 }
 
 impl Attributes {
-    pub fn new(opt: AttributesOptions) -> Self {
+    pub fn new(ci: AttributesCreateInfo) -> Self {
         let mut staves = None;
-        if opt.clefs.len() > 1 {
-            staves = Some(opt.clefs.len());
+        if ci.clefs.len() > 1 {
+            staves = Some(ci.clefs.len());
         }
-        let clefs = opt.clefs.iter().map(|c| c.parse().unwrap()).collect();
-        let time_sig: TimeSignature = opt.time_sig.parse().unwrap();
+        let clefs = ci.clefs.iter().map(|c| c.parse().unwrap()).collect();
+        let time_sig: TimeSignature = ci.time_sig.parse().unwrap();
         let mut staff_details = None;
-        if opt.clefs.len() == 1 && opt.clefs[0] == "percussion" {
+        if ci.clefs.len() == 1 && ci.clefs[0] == "percussion" {
             staff_details = Some(StaffDetails { staff_lines: 1 });
         }
 
@@ -520,8 +515,8 @@ impl Attributes {
             // TODO divisions are hard coded to be 480. Add more flexibility
             // so its globally applied to score
             divisions: 480,
-            key_fifths: key_fifths_from_name(&opt.key_name),
-            key_mode: opt.key_mode.parse().unwrap(),
+            key_fifths: key_fifths_from_name(&ci.key_name),
+            key_mode: ci.key_mode.parse().unwrap(),
             time_beats: time_sig.numerator,
             time_beat_type: time_sig.denominator,
             staves,
@@ -678,18 +673,28 @@ impl Measure {
         Ok(())
     }
 
-    /// The most generalized way to append to a measure. Other functions like
-    /// add_metronome, add_note and so on use this fn internally.
-    pub fn add_item(&mut self, item: MeasureItem) {
+    /// The most generalized way to append to a measure. Functions that
+    /// add any measure elements to a part use this internally.
+    pub fn item(&mut self, item: MeasureItem) {
         self.items.push(item);
+    }
+
+    /// Update the measure's attributes
+    pub fn attributes(&mut self, attr: AttributesCreateInfo) {
+        self.attributes = Some(Attributes::new(attr));
+
+        // Update the effective attributes at the part level
+        if let Some(attr) = self.attributes.clone() {
+            self.effective_attributes = Some(attr);
+        }
     }
 
     // TODO consider if the user can add a staff distinction or placement.
     // This fn is intended to prioritize convenience over customizability.
     // Add to beat_unit type safety to allow for dotted units and more clarity
     // to the fn user.
-    pub fn add_metronome(&mut self, beat_unit: &str, per_minute: u32) {
-        self.add_item(MeasureItem::Direction(Direction {
+    pub fn metronome(&mut self, beat_unit: &str, per_minute: u32) {
+        self.item(MeasureItem::Direction(Direction {
             kind: DirectionType::Metronome {
                 beat_unit: beat_unit.to_string(),
                 per_minute,
@@ -699,9 +704,9 @@ impl Measure {
         }))
     }
 
-    /// Convenience function to add a dynamic direction to a measure
-    pub fn add_dynamics(&mut self, dynamics: &str) {
-        self.add_item(MeasureItem::Direction(Direction {
+    /// Append a dynamic direction to a measure to items list
+    pub fn dynamics(&mut self, dynamics: &str) {
+        self.item(MeasureItem::Direction(Direction {
             kind: DirectionType::Dynamics(Dynamics::from_str(dynamics)),
             placement: Some("below".to_string()),
             staff: None,
@@ -713,12 +718,9 @@ impl Measure {
     /// pitch:duration
     /// ie. "C4:h." -> C note, 4th octave, dotted half note
     /// See NoteType::from_char() for all duration chars
-    pub fn add_note(&mut self, note_str: &str) {
+    pub fn note(&mut self, note_str: &str) {
         let parts: Vec<&str> = note_str.split(':').collect();
-        assert!(
-            parts.len() == 2,
-            "add_note requires a pitch:duration notation"
-        );
+        assert!(parts.len() == 2, "note requires a pitch:duration notation");
 
         // initial note from string parse
         let mut note = Note::new(note_str.parse().unwrap());
@@ -763,30 +765,30 @@ impl Measure {
                 }
             }
         }
-        self.add_item(MeasureItem::Note(note));
+        self.item(MeasureItem::Note(note));
     }
 
     /// Convenience function to add a rest to a measure.
     /// Parses rests from custom DSL format specifying duration
     /// ie. "h." -> dotted half rest
     /// See NoteType::from_char() for all duration chars
-    pub fn add_rest(&mut self, rest: &str) {
+    pub fn rest(&mut self, rest: &str) {
         let parts: Vec<&str> = rest.split(':').collect();
-        assert!(parts.len() == 1, "add_rest requires a duration notation");
-        self.add_item(MeasureItem::Note(Note::new(rest.parse().unwrap())));
+        assert!(parts.len() == 1, "rest requires a duration notation");
+        self.item(MeasureItem::Note(Note::new(rest.parse().unwrap())));
     }
 
     /// Convenience function to add a chord to a measure.
     /// Parses chord from custom DSL format specifying root:quality:duration
     /// ie. "maj:C4:h." -> Cmaj triad with dotted half note duration
-    pub fn add_chord(&mut self, chord_str: &str) {
+    pub fn chord(&mut self, chord_str: &str) {
         let mut parts = chord_str.splitn(2, ":");
         let quality = parts.next().unwrap().parse().unwrap();
         let note = Note::new(parts.next().unwrap().parse().unwrap());
         let chord = Chord::new(note.pitch.unwrap(), quality, None);
 
         // TODO refactor to_notes() API. This is hard coded for now. This means
-        // add_chord doesnt work for multi staff parts or multi voice parts.
+        // chord doesnt work for multi staff parts or multi voice parts.
         let notes = chord.to_notes(note.kind, 480, None, None);
 
         for n in notes {
@@ -795,10 +797,38 @@ impl Measure {
     }
 }
 
+pub struct MusicXmlInstrumentCreateInfo {
+    pub part_id: String,
+    pub instrument_id: u32,
+    pub name: String,
+    pub midi_program: Option<u8>,
+    pub sound: Option<String>,
+}
+
 // TODO this name is tentative
-pub struct CombinedInstrument {
+pub struct MusicXmlInstrument {
     pub midi: MidiInstrument,
     pub score: ScoreInstrument,
+}
+
+impl MusicXmlInstrument {
+    pub fn new(ci: MusicXmlInstrumentCreateInfo) -> Self {
+        let id = Some(format!("{}-I{}", &ci.part_id, ci.instrument_id));
+
+        MusicXmlInstrument {
+            midi: MidiInstrument {
+                id,
+                program: ci.midi_program,
+                ..MidiInstrument::default()
+            },
+            score: ScoreInstrument {
+                id,
+                name: ci.name.into(),
+                sound: ci.sound,
+                ..ScoreInstrument::default()
+            },
+        }
+    }
 }
 
 // MusicXML representation of <midi-instrument>
@@ -1167,7 +1197,7 @@ pub struct Note {
     is_measure_rest: bool,
 }
 
-pub struct NoteOptions {
+pub struct NoteCreateInfo {
     pub kind: NoteType,
     pub divisions: u32,
     pub is_chord: bool,
@@ -1188,7 +1218,7 @@ pub struct NoteOptions {
     pub duration_override: Option<u32>,
 }
 
-impl Default for NoteOptions {
+impl Default for NoteCreateInfo {
     fn default() -> Self {
         Self {
             kind: NoteType::Quarter,
@@ -1208,7 +1238,7 @@ impl Default for NoteOptions {
     }
 }
 
-impl std::str::FromStr for NoteOptions {
+impl std::str::FromStr for NoteCreateInfo {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -1243,18 +1273,18 @@ impl std::str::FromStr for NoteOptions {
         let kind = NoteType::from_char(type_char);
         let dot_count = chars.filter(|&c| c == '.').count();
 
-        Ok(NoteOptions {
+        Ok(NoteCreateInfo {
             pitch: pitch_opt,
             kind,
             dots: if dot_count > 0 { Some(dot_count as u8) } else { None },
             tie,
-            ..NoteOptions::default()
+            ..NoteCreateInfo::default()
         })
     }
 }
 
 impl Note {
-    pub fn new(opt: NoteOptions) -> Self {
+    pub fn new(opt: NoteCreateInfo) -> Self {
         // Measure rests should ignore the normal duration calculation.
         // Measure rests will have a duration value that fills the whole
         // measure.
@@ -1606,14 +1636,14 @@ impl Chord {
         let mut notes = Vec::new();
         for (i, p) in self.pitches.iter().enumerate() {
             let is_chord = i != 0;
-            notes.push(Note::new(NoteOptions {
+            notes.push(Note::new(NoteCreateInfo {
                 pitch: Some(p.clone()),
                 is_chord,
                 kind: note_kind.clone(),
                 divisions,
                 staff,
                 voice,
-                ..NoteOptions::default()
+                ..NoteCreateInfo::default()
             }));
         }
         notes

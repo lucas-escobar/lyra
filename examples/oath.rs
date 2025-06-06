@@ -1,6 +1,7 @@
 use lyra::compose::{
-    Attributes, AttributesOptions, MusescoreInstrumentSound, Score,
-    ScoreOptions,
+    Attributes, AttributesCreateInfo, GeneralMidiInstrument,
+    MusescoreInstrumentSound, MusicXmlInstrumentCreateInfo, Score,
+    ScoreCreateInfo,
 };
 use lyra::process::{
     GainEffect, LowPassFilter, PanEffect, Processor, StereoBuffer, Track,
@@ -13,79 +14,80 @@ use std::fs::create_dir_all;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut score = Score::new(ScoreOptions {
+    let mut score = Score::new(ScoreCreateInfo {
         title: "Oath to Order",
         composer: "Koji Kondo",
         arranger: "Lucas Escobar",
         source: Some("From The Legend of Zelda: Majora's Mask"),
     });
 
-    score.add_part("Bass", |p| {
-        p.add_instrument(
-            "Bass",
-            None,
-            Some(MusescoreInstrumentSound::PluckBass.to_id()),
-        );
-
-        let attr = Attributes::new(AttributesOptions {
-            clefs: vec!["bass"],
-            ..AttributesOptions::default()
+    score.part("Bass", |p| {
+        p.instrument(MusicXmlInstrumentCreateInfo {
+            part_id: p.id,
+            instrument_id: 1,
+            name: "Bass".into(),
+            midi_program: None,
+            sound: Some(MusescoreInstrumentSound::PluckBass.to_id()),
         });
 
-        p.add_measure(Some(attr), |m| {
-            m.add_metronome("quarter", 60);
-            m.add_dynamics("mf");
-            m.add_note("D2:w");
+        p.measure(|m| {
+            m.attributes(AttributesCreateInfo {
+                clefs: vec!["bass"],
+                ..AttributesCreateInfo::default()
+            });
+            m.metronome("quarter", 60);
+            m.dynamics("mf");
+            m.note("D2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("Eb2:w");
+        p.measure(|m| {
+            m.note("Eb2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("D2:w");
+        p.measure(|m| {
+            m.note("D2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("Eb2:w");
+        p.measure(|m| {
+            m.note("Eb2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("E2:w");
+        p.measure(|m| {
+            m.note("E2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("A2:h.");
-            m.add_note("C#3:q");
+        p.measure(|m| {
+            m.note("A2:h.");
+            m.note("C#3:q");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("D3:w");
+        p.measure(|m| {
+            m.note("D3:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("C3:w");
+        p.measure(|m| {
+            m.note("C3:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("B2:w");
+        p.measure(|m| {
+            m.note("B2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("A#2:w");
+        p.measure(|m| {
+            m.note("A#2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("A2:w");
+        p.measure(|m| {
+            m.note("A2:w");
         });
 
-        p.add_measure(None, |m| {
-            m.add_note("A2:w");
+        p.measure(|m| {
+            m.note("A2:w");
         });
     })?;
 
-    score.add_part("Piano", |p| {
-        p.add_instrument(
+    score.part("Piano", |p| {
+        p.instrument(
             "Piano",
             None,
             Some(MusescoreInstrumentSound::KeyboardPianoGrand.to_id()),
@@ -96,138 +98,138 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..AttributesOptions::default()
         });
 
-        p.add_measure(Some(attr), |m| {
-            m.add_metronome("quarter", 60);
-            m.add_dynamics("mf");
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("A3:e");
-            m.add_note("D4:e");
-            m.add_note("F4:e");
-            m.add_note("A4:e");
-            m.add_note("D5:e");
-            m.add_note("F5:e");
+        p.measure(Some(attr), |m| {
+            m.metronome("quarter", 60);
+            m.dynamics("mf");
+            m.rest("e");
+            m.note("D3:e");
+            m.note("A3:e");
+            m.note("D4:e");
+            m.note("F4:e");
+            m.note("A4:e");
+            m.note("D5:e");
+            m.note("F5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("Eb3:e");
-            m.add_note("Bb3:e");
-            m.add_note("D4:e");
-            m.add_note("G4:e");
-            m.add_note("Bb4:e");
-            m.add_note("D5:e");
-            m.add_note("G5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("Eb3:e");
+            m.note("Bb3:e");
+            m.note("D4:e");
+            m.note("G4:e");
+            m.note("Bb4:e");
+            m.note("D5:e");
+            m.note("G5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("A3:e");
-            m.add_note("D4:e");
-            m.add_note("F4:e");
-            m.add_note("A4:e");
-            m.add_note("D5:e");
-            m.add_note("F5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("D3:e");
+            m.note("A3:e");
+            m.note("D4:e");
+            m.note("F4:e");
+            m.note("A4:e");
+            m.note("D5:e");
+            m.note("F5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("Eb3:e");
-            m.add_note("Bb3:e");
-            m.add_note("D4:e");
-            m.add_note("G4:e");
-            m.add_note("Bb4:e");
-            m.add_note("D5:e");
-            m.add_note("G5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("Eb3:e");
+            m.note("Bb3:e");
+            m.note("D4:e");
+            m.note("G4:e");
+            m.note("Bb4:e");
+            m.note("D5:e");
+            m.note("G5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("E3:e");
-            m.add_note("Bb3:e");
-            m.add_note("D4:e");
-            m.add_note("G4:e");
-            m.add_note("Bb4:e");
-            m.add_note("D5:e");
-            m.add_note("G5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("E3:e");
+            m.note("Bb3:e");
+            m.note("D4:e");
+            m.note("G4:e");
+            m.note("Bb4:e");
+            m.note("D5:e");
+            m.note("G5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("A3:e");
-            m.add_note("Db4:e");
-            m.add_note("E4:e");
-            m.add_note("G4:e");
-            m.add_note("Db5:e");
-            m.add_note("E5:e");
-            m.add_note("G5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("A3:e");
+            m.note("Db4:e");
+            m.note("E4:e");
+            m.note("G4:e");
+            m.note("Db5:e");
+            m.note("E5:e");
+            m.note("G5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("A3:e");
-            m.add_note("D4:e");
-            m.add_note("F4:e");
-            m.add_note("A4:e");
-            m.add_note("D5:e");
-            m.add_note("F5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("D3:e");
+            m.note("A3:e");
+            m.note("D4:e");
+            m.note("F4:e");
+            m.note("A4:e");
+            m.note("D5:e");
+            m.note("F5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("A3:e");
-            m.add_note("D4:e");
-            m.add_note("F4:e");
-            m.add_note("A4:e");
-            m.add_note("D5:e");
-            m.add_note("F5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("D3:e");
+            m.note("A3:e");
+            m.note("D4:e");
+            m.note("F4:e");
+            m.note("A4:e");
+            m.note("D5:e");
+            m.note("F5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("B3:e");
-            m.add_note("D4:e");
-            m.add_note("G4:e");
-            m.add_note("B4:e");
-            m.add_note("D5:e");
-            m.add_note("G5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("D3:e");
+            m.note("B3:e");
+            m.note("D4:e");
+            m.note("G4:e");
+            m.note("B4:e");
+            m.note("D5:e");
+            m.note("G5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("A3:e");
-            m.add_note("D4:e");
-            m.add_note("F4:e");
-            m.add_note("A4:e");
-            m.add_note("D5:e");
-            m.add_note("F5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("D3:e");
+            m.note("A3:e");
+            m.note("D4:e");
+            m.note("F4:e");
+            m.note("A4:e");
+            m.note("D5:e");
+            m.note("F5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("D3:e");
-            m.add_note("A3:e");
-            m.add_note("D4:e");
-            m.add_note("F4:e");
-            m.add_note("A4:e");
-            m.add_note("D5:e");
-            m.add_note("F5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("D3:e");
+            m.note("A3:e");
+            m.note("D4:e");
+            m.note("F4:e");
+            m.note("A4:e");
+            m.note("D5:e");
+            m.note("F5:e");
         });
 
-        p.add_measure(None, |m| {
-            m.add_rest("e");
-            m.add_note("E3:e");
-            m.add_note("G3:e");
-            m.add_note("Db4:e");
-            m.add_note("E4:e");
-            m.add_note("G4:e");
-            m.add_note("Db5:e");
-            m.add_note("G5:e");
+        p.measure(|m| {
+            m.rest("e");
+            m.note("E3:e");
+            m.note("G3:e");
+            m.note("Db4:e");
+            m.note("E4:e");
+            m.note("G4:e");
+            m.note("Db5:e");
+            m.note("G5:e");
         });
     })?;
 
