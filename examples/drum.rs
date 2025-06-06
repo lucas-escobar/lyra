@@ -1,4 +1,4 @@
-use lyra::compose::{Attributes, AttributesCreateInfo, Score, ScoreCreateInfo};
+use lyra::compose::{AttributesCreateInfo, Score, ScoreCreateInfo};
 use lyra::process::{
     GainEffect, LowPassFilter, PanEffect, Processor, StereoBuffer, Track,
 };
@@ -19,12 +19,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     score.part("Kick", |p| {
-        let attr = Attributes::new(AttributesCreateInfo {
-            clefs: vec!["percussion"],
-            ..AttributesCreateInfo::default()
-        });
-
-        p.measure(Some(attr), |m| {
+        p.measure(|m| {
+            m.attributes(AttributesCreateInfo {
+                clefs: vec!["percussion"],
+                ..AttributesCreateInfo::default()
+            });
             m.metronome("quarter", 90);
             m.dynamics("mf");
             m.note("E4:q");
@@ -35,12 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     score.part("Snare", |p| {
-        let attr = Attributes::new(AttributesCreateInfo {
-            clefs: vec!["percussion"],
-            ..AttributesCreateInfo::default()
-        });
-
-        p.measure(Some(attr), |m| {
+        p.measure(|m| {
+            m.attributes(AttributesCreateInfo {
+                clefs: vec!["percussion"],
+                ..AttributesCreateInfo::default()
+            });
             m.metronome("quarter", 90);
             m.dynamics("mf");
             m.rest("q");
@@ -51,14 +49,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     score.part("High Hat", |p| {
-        let attr = Attributes::new(AttributesCreateInfo {
-            clefs: vec!["percussion"],
-            ..AttributesCreateInfo::default()
-        });
-
-        p.measure(Some(attr), |m| {
+        p.measure(|m| {
+            m.attributes(AttributesCreateInfo {
+                clefs: vec!["percussion"],
+                ..AttributesCreateInfo::default()
+            });
             m.metronome("quarter", 90);
-            m.dynamics("mf");
+            m.dynamics("mp");
             m.note("E4:e");
             m.note("E4:e");
             m.note("E4:e");
@@ -122,31 +119,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 buffer: StereoBuffer::from_mono(
                     &kick.render_part(&score.parts[0], &context),
                 ),
-                effects: Some(vec![
-                    Box::new(GainEffect { gain: 1.0 }),
-                    Box::new(PanEffect { pan: 0.15 }),
-                    //Box::new(LowPassFilter::new(1000.0)),
-                ]),
+                effects: Some(vec![Box::new(PanEffect { pan: 0.15 })]),
             },
             Track {
                 buffer: StereoBuffer::from_mono(
                     &snare.render_part(&score.parts[1], &context),
                 ),
                 effects: Some(vec![
-                    Box::new(GainEffect { gain: 1.0 }),
                     Box::new(PanEffect { pan: 0.0 }),
-                    //Box::new(LowPassFilter::new(1000.0)),
+                    Box::new(GainEffect { gain: 0.8 }),
                 ]),
             },
             Track {
                 buffer: StereoBuffer::from_mono(
                     &hihat.render_part(&score.parts[2], &context),
                 ),
-                effects: Some(vec![
-                    Box::new(GainEffect { gain: 1.0 }),
-                    Box::new(PanEffect { pan: -0.2 }),
-                    //Box::new(LowPassFilter::new(1000.0)),
-                ]),
+                effects: Some(vec![Box::new(PanEffect { pan: -0.2 })]),
             },
         ],
         master_fx: vec![Box::new(GainEffect { gain: 0.8 })],

@@ -400,30 +400,48 @@ impl Instrument for KickDrum {
 
         for m in &part.measures {
             for item in &m.items {
-                if let MeasureItem::Note(note) = item {
-                    let dur = state.ticks_to_secs(note.duration);
-                    let n = state.ticks_to_samples(note.duration, sr);
+                match item {
+                    MeasureItem::Note(note) => {
+                        if note.unpitched.is_some() {
+                            let dur = state.ticks_to_secs(note.duration);
+                            let n = state.ticks_to_samples(note.duration, sr);
 
-                    let start_sample =
-                        (state.time_secs() * sr as Float).floor() as usize;
+                            let start_sample = (state.time_secs() * sr as Float)
+                                .floor()
+                                as usize;
 
-                    // Ensure output is large enough
-                    if output.len() < start_sample + n {
-                        output.resize(start_sample + n, 0.0);
+                            if output.len() < start_sample + n {
+                                output.resize(start_sample + n, 0.0);
+                            }
+
+                            for i in 0..n {
+                                let t = i as Float / sr as Float;
+                                let amp = self.amp_env.value(t, dur);
+                                let freq = self.freq_env.value(t, dur);
+                                let mut sample = OscillatorType::Sine
+                                    .sample(freq, t)
+                                    * amp
+                                    * state.velocity;
+                                if let Some(d) = &self.distortion {
+                                    sample = d.apply(sample)
+                                };
+                                output[start_sample + i] += sample;
+                            }
+                        }
+                        state.advance(note.duration);
                     }
 
-                    for i in 0..n {
-                        let t = i as Float / sr as Float;
-                        let amp = self.amp_env.value(t, dur);
-                        let freq = self.freq_env.value(t, dur);
-                        let mut sample =
-                            OscillatorType::Sine.sample(freq, t) * amp;
-                        if let Some(d) = &self.distortion {
-                            sample = d.apply(sample)
-                        };
-                        output[start_sample + i] += sample.clamp(-1.0, 1.0);
-                    }
-                    state.advance(note.duration);
+                    MeasureItem::Direction(dir) => match &dir.kind {
+                        DirectionType::Metronome { per_minute, .. } => {
+                            state.tempo_bpm = *per_minute as Float;
+                        }
+                        DirectionType::Dynamics(dynamics) => {
+                            state.velocity = dynamics.normalized_velocity();
+                        }
+                        _ => {}
+                    },
+
+                    _ => {}
                 }
             }
         }
@@ -443,68 +461,72 @@ pub struct SnareDrum {
 
 impl Instrument for SnareDrum {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let sample_rate = ctx.sample_rate as Float;
         let mut output = Vec::new();
         let mut state = RenderState::default();
+        let sr = ctx.sample_rate;
 
         let mut rng = StdRng::seed_from_u64(42); // deterministic noise
 
         for measure in &part.measures {
             for item in &measure.items {
-                if let MeasureItem::Note(note) = item {
-                    if note.unpitched.is_some() {
-                        let duration_beats =
-                            note.duration as Float / state.divisions as Float;
-                        let duration_secs =
-                            duration_beats * state.seconds_per_beat();
+                match item {
+                    MeasureItem::Note(note) => {
+                        if note.unpitched.is_some() {
+                            let dur = state.ticks_to_secs(note.duration);
+                            let n = state.ticks_to_samples(note.duration, sr);
 
-                        let total_samples =
-                            (duration_secs * sample_rate).ceil() as usize;
+                            let start_sample = (state.time_secs() * sr as Float)
+                                .floor()
+                                as usize;
 
-                        let start_time_secs =
-                            state.time_beats * state.seconds_per_beat();
-                        let start_sample =
-                            (start_time_secs * sample_rate).round() as usize;
+                            if output.len() < start_sample + n {
+                                output.resize(start_sample + n, 0.0);
+                            }
 
-                        // Ensure output is large enough
-                        if output.len() < start_sample + total_samples {
-                            output.resize(start_sample + total_samples, 0.0);
-                        }
+                            for i in 0..n {
+                                let t = i as Float / sr as Float;
 
-                        for i in 0..total_samples {
-                            let t = i as Float / sample_rate;
+                                let amp = self.amp_env.value(t, dur);
+                                let noise_amp = self.noise_env.value(t, dur);
+                                let noise_sample: Float =
+                                    rng.random_range(-1.0..1.0);
 
-                            let amp = self.amp_env.value(t, duration_secs);
-                            let noise_amp =
-                                self.noise_env.value(t, duration_secs);
-                            let noise_sample: Float =
-                                rng.random_range(-1.0..1.0);
+                                let tonal_sample =
+                                    if let (Some(freq), Some(env)) =
+                                        (self.freq, &self.tone_env)
+                                    {
+                                        let tone_amp = env.value(t, dur);
+                                        (2.0 * PI * freq * t).sin() * tone_amp
+                                    } else {
+                                        0.0
+                                    };
 
-                            let tonal_sample = if let (Some(freq), Some(env)) =
-                                (self.freq, &self.tone_env)
-                            {
-                                let tone_amp = env.value(t, duration_secs);
-                                (2.0 * PI * freq * t).sin() * tone_amp
-                            } else {
-                                0.0
-                            };
+                                let mut sample =
+                                    (noise_sample * noise_amp) + tonal_sample;
+                                sample *= amp * state.velocity;
 
-                            let mut sample =
-                                (noise_sample * noise_amp) + tonal_sample;
-                            sample *= amp;
-
-                            let processed_sample =
-                                if let Some(distortion) = &self.distortion {
-                                    distortion.apply(sample)
-                                } else {
-                                    sample
+                                if let Some(d) = &self.distortion {
+                                    sample = d.apply(sample)
                                 };
-                            output[start_sample + i] +=
-                                processed_sample.clamp(-1.0, 1.0);
+
+                                output[start_sample + i] += sample;
+                            }
                         }
+
+                        state.advance(note.duration);
                     }
 
-                    state.advance(note.duration);
+                    MeasureItem::Direction(dir) => match &dir.kind {
+                        DirectionType::Metronome { per_minute, .. } => {
+                            state.tempo_bpm = *per_minute as Float;
+                        }
+                        DirectionType::Dynamics(dynamics) => {
+                            state.velocity = dynamics.normalized_velocity();
+                        }
+                        _ => {}
+                    },
+
+                    _ => {}
                 }
             }
         }
@@ -519,41 +541,51 @@ pub struct HiHat {
 
 impl Instrument for HiHat {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let sample_rate = ctx.sample_rate as Float;
         let mut output = Vec::new();
         let mut state = RenderState::default();
+        let sr = ctx.sample_rate;
 
-        let mut rng = StdRng::seed_from_u64(12345); // deterministic noise for reproducibility
+        let mut rng = StdRng::seed_from_u64(12345);
 
         for measure in &part.measures {
             for item in &measure.items {
-                if let MeasureItem::Note(note) = item {
-                    let duration_beats =
-                        note.duration as Float / state.divisions as Float;
-                    let duration_secs =
-                        duration_beats * state.seconds_per_beat();
+                match item {
+                    MeasureItem::Note(note) => {
+                        if note.unpitched.is_some() {
+                            let dur = state.ticks_to_secs(note.duration);
+                            let n = state.ticks_to_samples(note.duration, sr);
 
-                    let total_samples =
-                        (duration_secs * sample_rate).ceil() as usize;
+                            let start_sample = (state.time_secs() * sr as Float)
+                                .floor()
+                                as usize;
 
-                    let start_time_secs =
-                        state.time_beats * state.seconds_per_beat();
-                    let start_sample =
-                        (start_time_secs * sample_rate).round() as usize;
+                            if output.len() < start_sample + n {
+                                output.resize(start_sample + n, 0.0);
+                            }
 
-                    // Ensure output is large enough
-                    if output.len() < start_sample + total_samples {
-                        output.resize(start_sample + total_samples, 0.0);
+                            for i in 0..n {
+                                let t = i as Float / sr as Float;
+                                let amp = self.amp_env.value(t, dur);
+                                let noise = rng.random_range(-1.0..1.0); // white noise
+                                let sample = noise * amp * state.velocity;
+                                output[start_sample + i] += sample;
+                            }
+                        }
+
+                        state.advance(note.duration);
                     }
-                    for i in 0..total_samples {
-                        let t = i as Float / sample_rate;
-                        let amp = self.amp_env.value(t, duration_secs);
-                        let noise = rng.random_range(-1.0..1.0); // white noise
-                        let sample = noise * amp;
-                        output[start_sample + i] += sample.clamp(-1.0, 1.0);
-                    }
 
-                    state.advance(note.duration);
+                    MeasureItem::Direction(dir) => match &dir.kind {
+                        DirectionType::Metronome { per_minute, .. } => {
+                            state.tempo_bpm = *per_minute as Float;
+                        }
+                        DirectionType::Dynamics(dynamics) => {
+                            state.velocity = dynamics.normalized_velocity();
+                        }
+                        _ => {}
+                    },
+
+                    _ => {}
                 }
             }
         }

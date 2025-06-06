@@ -32,7 +32,13 @@ impl StereoBuffer {
     }
 
     pub fn add(&mut self, other: &StereoBuffer) {
-        for i in 0..self.len() {
+        let len = other.len();
+        if self.len() < len {
+            self.left.resize(len, 0.0);
+            self.right.resize(len, 0.0);
+        }
+
+        for i in 0..len {
             self.left[i] += other.left[i];
             self.right[i] += other.right[i];
         }
