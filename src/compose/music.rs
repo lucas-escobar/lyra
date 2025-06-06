@@ -243,18 +243,22 @@ impl Part {
     where
         F: FnOnce(&mut Measure),
     {
-        self.attributes()
-        // Update the effective attributes at the part level
-        if let Some(attr) = attributes.clone() {
-            self.effective_attributes = Some(attr);
+        let mut m = Measure::new(MeasureCreateInfo {
+            measure_number: self.measures.len() + 1,
+            attributes: None,
+            effective_attributes: self.effective_attributes.clone(),
+        });
+
+        f(&mut m);
+
+        // After measure is created by user, save attributes to part.
+        // This assumes that measures are added to the part in order.
+        // TODO i think removing this part-level state is good but i need to
+        // find another solution for parts to have attribute awareness
+        if let Some(attr) = &m.attributes {
+            self.effective_attributes = Some(attr.clone());
         }
 
-        let mut m = Measure::new(
-            self.measures.len() + 1,
-            attributes,
-            self.effective_attributes.clone(),
-        );
-        f(&mut m);
         self.measures.push(m);
     }
 
@@ -278,8 +282,13 @@ impl Part {
         });
 
         let number = self.measures.len() + 1;
-        let mut measure =
-            Measure::new(number, None, self.effective_attributes.clone());
+
+        let mut measure = Measure::new(MeasureCreateInfo {
+            measure_number: number,
+            attributes: None,
+            effective_attributes: self.effective_attributes.clone(),
+        });
+
         measure.item(MeasureItem::Note(rest));
         self.measures.push(measure);
     }
@@ -312,7 +321,8 @@ impl Part {
         // TODO only supports one instrument per part currently
         self.instrument =
             Some(MusicXmlInstrument::new(MusicXmlInstrumentCreateInfo {
-                id: Some(format!("{}-I{}", self.id, 1)),
+                part_id: ci.part_id,
+                instrument_id: ci.instrument_id,
                 name: ci.name,
                 midi_program: ci.midi_program,
                 sound: ci.sound,
@@ -626,21 +636,28 @@ pub struct Forward {
 pub struct Measure {
     pub items: Vec<MeasureItem>,
     number: usize,
-    attributes: Option<Attributes>,
+    pub attributes: Option<Attributes>,
 
     /// This value is cloned from the parent part of the measure. This is used
     /// in measures that do not define new attributes. This is separate from
     /// attributes because it should not be written to XML.
+    pub effective_attributes: Option<Attributes>,
+}
+
+pub struct MeasureCreateInfo {
+    measure_number: usize,
+    attributes: Option<Attributes>,
     effective_attributes: Option<Attributes>,
 }
 
 impl Measure {
-    pub fn new(
-        number: usize,
-        attributes: Option<Attributes>,
-        effective_attributes: Option<Attributes>,
-    ) -> Self {
-        Self { number, items: Vec::new(), attributes, effective_attributes }
+    pub fn new(ci: MeasureCreateInfo) -> Self {
+        Self {
+            number: ci.measure_number,
+            items: Vec::new(),
+            attributes: ci.attributes,
+            effective_attributes: ci.effective_attributes,
+        }
     }
 
     pub fn write_to<W: std::io::Write>(
@@ -679,14 +696,15 @@ impl Measure {
         self.items.push(item);
     }
 
-    /// Update the measure's attributes
-    pub fn attributes(&mut self, attr: AttributesCreateInfo) {
-        self.attributes = Some(Attributes::new(attr));
-
-        // Update the effective attributes at the part level
-        if let Some(attr) = self.attributes.clone() {
-            self.effective_attributes = Some(attr);
-        }
+    /// Update the measure's attributes. Overwrites effective attributes.
+    pub fn attributes(&mut self, ci: AttributesCreateInfo) {
+        assert!(
+            self.items.len() == 0,
+            "Attributes must be set before items are added to it"
+        );
+        let attr = Attributes::new(ci);
+        self.attributes = Some(attr.clone());
+        self.effective_attributes = Some(attr);
     }
 
     // TODO consider if the user can add a staff distinction or placement.
@@ -813,11 +831,11 @@ pub struct MusicXmlInstrument {
 
 impl MusicXmlInstrument {
     pub fn new(ci: MusicXmlInstrumentCreateInfo) -> Self {
-        let id = Some(format!("{}-I{}", &ci.part_id, ci.instrument_id));
+        let id = format!("{}-I{}", &ci.part_id, ci.instrument_id);
 
         MusicXmlInstrument {
             midi: MidiInstrument {
-                id,
+                id: id.clone(),
                 program: ci.midi_program,
                 ..MidiInstrument::default()
             },

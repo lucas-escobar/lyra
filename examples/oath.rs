@@ -1,7 +1,6 @@
 use lyra::compose::{
-    Attributes, AttributesCreateInfo, GeneralMidiInstrument,
-    MusescoreInstrumentSound, MusicXmlInstrumentCreateInfo, Score,
-    ScoreCreateInfo,
+    AttributesCreateInfo, MusescoreInstrumentSound,
+    MusicXmlInstrumentCreateInfo, Score, ScoreCreateInfo,
 };
 use lyra::process::{
     GainEffect, LowPassFilter, PanEffect, Processor, StereoBuffer, Track,
@@ -14,6 +13,7 @@ use std::fs::create_dir_all;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Define score
     let mut score = Score::new(ScoreCreateInfo {
         title: "Oath to Order",
         composer: "Koji Kondo",
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     score.part("Bass", |p| {
         p.instrument(MusicXmlInstrumentCreateInfo {
-            part_id: p.id,
+            part_id: p.id.clone(),
             instrument_id: 1,
             name: "Bass".into(),
             midi_program: None,
@@ -87,18 +87,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     score.part("Piano", |p| {
-        p.instrument(
-            "Piano",
-            None,
-            Some(MusescoreInstrumentSound::KeyboardPianoGrand.to_id()),
-        );
-
-        let attr = Attributes::new(AttributesOptions {
-            clefs: vec!["treble"],
-            ..AttributesOptions::default()
+        p.instrument(MusicXmlInstrumentCreateInfo {
+            part_id: p.id.clone(),
+            instrument_id: 1,
+            name: "Piano".into(),
+            midi_program: None,
+            sound: Some(MusescoreInstrumentSound::KeyboardPianoGrand.to_id()),
         });
 
-        p.measure(Some(attr), |m| {
+        p.measure(|m| {
+            m.attributes(AttributesCreateInfo {
+                clefs: vec!["treble"],
+                ..AttributesCreateInfo::default()
+            });
             m.metronome("quarter", 60);
             m.dynamics("mf");
             m.rest("e");
@@ -233,6 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     })?;
 
+    // Define instruments
     let synth_saw = Synth {
         oscillator: OscillatorType::Saw,
         envelope: ADSR { attack: 0.1, decay: 0.2, sustain: 0.8, release: 0.2 },
@@ -243,36 +245,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         envelope: ADSR { attack: 0.1, decay: 0.2, sustain: 0.8, release: 0.2 },
     };
 
+    // Process tracks
     let context = RenderContext { sample_rate: 44100 };
-
-    let bass_track = Track {
-        buffer: StereoBuffer::from_mono(
-            &synth_saw.render_part(&score.parts[0], &context),
-        ),
-        effects: Some(vec![
-            Box::new(GainEffect { gain: 1.0 }),
-            Box::new(PanEffect { pan: 0.8 }),
-            Box::new(LowPassFilter::new(550.0)),
-        ]),
-    };
-
-    let piano_track = Track {
-        buffer: StereoBuffer::from_mono(
-            &synth_sine.render_part(&score.parts[1], &context),
-        ),
-        effects: Some(vec![
-            Box::new(GainEffect { gain: 1.0 }),
-            Box::new(PanEffect { pan: -0.2 }),
-            //Box::new(LowPassFilter::new(1000.0)),
-        ]),
-    };
-
     let mut processor = Processor {
-        tracks: vec![bass_track, piano_track],
+        tracks: vec![
+            Track {
+                buffer: StereoBuffer::from_mono(
+                    &synth_saw.render_part(&score.parts[0], &context),
+                ),
+                effects: Some(vec![
+                    Box::new(GainEffect { gain: 1.0 }),
+                    Box::new(PanEffect { pan: 0.8 }),
+                    Box::new(LowPassFilter::new(550.0)),
+                ]),
+            },
+            Track {
+                buffer: StereoBuffer::from_mono(
+                    &synth_sine.render_part(&score.parts[1], &context),
+                ),
+                effects: Some(vec![
+                    Box::new(GainEffect { gain: 1.0 }),
+                    Box::new(PanEffect { pan: -0.2 }),
+                    //Box::new(LowPassFilter::new(1000.0)),
+                ]),
+            },
+        ],
         master_fx: vec![Box::new(GainEffect { gain: 0.8 })],
     };
 
-    let out_buf = processor.process(context.sample_rate as f64);
+    let out_buf = processor.process(context.sample_rate);
 
     let output_path = Path::new("output/oath_to_order.wav");
     if let Some(parent) = output_path.parent() {
