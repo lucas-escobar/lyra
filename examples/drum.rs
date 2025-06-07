@@ -3,9 +3,13 @@ use lyra::process::{
     GainEffect, LowPassFilter, PanEffect, Processor, StereoBuffer, Track,
 };
 use lyra::render::{
-    save_to_wav, Distortion, HiHat, Instrument, KickDrum,
-    ParametricDecayEnvelope, RenderContext, SnareDrum,
+    save_to_wav, Distortion, HiHat, KickDrum, ParametricDecayEnvelope,
+    RenderContext, SnareDrum, UnpitchedInstrument,
 };
+
+use rand::rngs::StdRng;
+use rand::Rng;
+use rand::SeedableRng;
 
 use std::fs::create_dir_all;
 use std::path::Path;
@@ -67,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     })?;
 
-    let kick = KickDrum {
+    let mut kick = KickDrum {
         amp_env: ParametricDecayEnvelope {
             start: 1.0,
             end: 0.0,
@@ -82,7 +86,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         transient: None, // Optional: You can later add a snappy click here
     };
 
-    let snare = SnareDrum {
+    let mut snare = SnareDrum {
+        rng: StdRng::seed_from_u64(42),
         amp_env: ParametricDecayEnvelope {
             start: 1.0,
             end: 0.0,
@@ -103,7 +108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         transient: None,
     };
 
-    let hihat = HiHat {
+    let mut hihat = HiHat {
+        rng: StdRng::seed_from_u64(1234),
         amp_env: ParametricDecayEnvelope {
             start: 1.0,
             end: 0.0,
@@ -116,24 +122,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut processor = Processor {
         tracks: vec![
             Track {
-                buffer: StereoBuffer::from_mono(
-                    &kick.render_part(&score.parts[0], &context),
-                ),
+                buffer: StereoBuffer::from_mono(&kick.render_part(
+                    &score.part_by_name("Kick").unwrap(),
+                    &context,
+                )),
                 effects: Some(vec![Box::new(PanEffect { pan: 0.15 })]),
             },
             Track {
-                buffer: StereoBuffer::from_mono(
-                    &snare.render_part(&score.parts[1], &context),
-                ),
+                buffer: StereoBuffer::from_mono(&snare.render_part(
+                    &score.part_by_name("Snare").unwrap(),
+                    &context,
+                )),
                 effects: Some(vec![
                     Box::new(PanEffect { pan: 0.0 }),
                     Box::new(GainEffect { gain: 0.8 }),
                 ]),
             },
             Track {
-                buffer: StereoBuffer::from_mono(
-                    &hihat.render_part(&score.parts[2], &context),
-                ),
+                buffer: StereoBuffer::from_mono(&hihat.render_part(
+                    &score.part_by_name("High Hat").unwrap(),
+                    &context,
+                )),
                 effects: Some(vec![Box::new(PanEffect { pan: -0.2 })]),
             },
         ],

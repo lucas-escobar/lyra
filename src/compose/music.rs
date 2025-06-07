@@ -36,6 +36,15 @@ impl Score {
         }
     }
 
+    pub fn part_by_name(&self, name: &str) -> Option<&Part> {
+        self.parts.iter().find(|p| p.name == name)
+    }
+
+    // Mutable version if needed
+    pub fn part_by_name_mut(&mut self, name: &str) -> Option<&mut Part> {
+        self.parts.iter_mut().find(|p| p.name == name)
+    }
+
     /// This needs to be used before a score is to be written.
     /// This is because the number of measures across all parts in a score need
     /// to be the same. This function will fill each part with empty measures
@@ -751,6 +760,7 @@ impl Measure {
                 }
                 MeasureItem::Backup(backup) => backup.write_to(writer)?,
                 MeasureItem::Forward(_) => panic!("Not implemented"),
+                MeasureItem::Barline(_) => panic!("Not implemented"),
             }
         }
         writer.close_tag("measure")?;

@@ -5,9 +5,7 @@ use lyra::compose::{
 use lyra::process::{
     GainEffect, LowPassFilter, PanEffect, Processor, StereoBuffer, Track,
 };
-use lyra::render::{
-    save_to_wav, Instrument, OscillatorType, RenderContext, Synth, ADSR,
-};
+use lyra::render::{save_to_wav, OscillatorType, RenderContext, Synth, ADSR};
 
 use std::fs::create_dir_all;
 use std::path::Path;

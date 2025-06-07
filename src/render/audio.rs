@@ -10,10 +10,10 @@ use rand::SeedableRng;
 type Float = f64;
 
 pub trait UnpitchedInstrument {
-    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float;
+    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float;
 
     /// Renders a MusicXML part
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+    fn render_part(&mut self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut output = Vec::new();
         let mut state = RenderState::default();
         let sr = ctx.sample_rate;
@@ -258,7 +258,7 @@ pub struct Synth {
 }
 
 impl Synth {
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+    pub fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut state = RenderState::default();
 
         for measure in &part.measures {
@@ -444,7 +444,7 @@ pub struct KickDrum {
 }
 
 impl UnpitchedInstrument for KickDrum {
-    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float {
+    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float {
         let amp = self.amp_env.value(t, dur);
         let freq = self.freq_env.value(t, dur);
         let mut sample =
@@ -468,7 +468,7 @@ pub struct SnareDrum {
 }
 
 impl UnpitchedInstrument for SnareDrum {
-    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float {
+    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float {
         let amp = self.amp_env.value(t, dur);
         let noise_amp = self.noise_env.value(t, dur);
         let noise_sample: Float = self.rng.random_range(-1.0..1.0);
@@ -497,7 +497,7 @@ pub struct HiHat {
 }
 
 impl UnpitchedInstrument for HiHat {
-    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float {
+    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float {
         let amp = self.amp_env.value(t, dur);
         let noise = self.rng.random_range(-1.0..1.0); // white noise
         let sample = noise * amp * state.velocity;
