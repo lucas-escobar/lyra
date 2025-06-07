@@ -1,4 +1,4 @@
-use crate::compose::{DirectionType, MeasureItem, Part, Pitch, StartStop};
+use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
@@ -9,11 +9,146 @@ use rand::SeedableRng;
 /// Sample buffers in the render layer have double float precision
 type Float = f64;
 
+pub trait Instrument: 'static {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64>;
+}
+
+pub enum AnyInstrument {
+    Pitched(Box<dyn PitchedInstrument>),
+    Unpitched(Box<dyn UnpitchedInstrument>),
+}
+
+impl Instrument for AnyInstrument {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<f64> {
+        match self {
+            AnyInstrument::Pitched(inst) => inst.render_part(part, ctx),
+            AnyInstrument::Unpitched(inst) => inst.render_part(part, ctx),
+        }
+    }
+}
+
+impl AnyInstrument {
+    pub fn pitched<T: PitchedInstrument + 'static>(inst: T) -> Self {
+        AnyInstrument::Pitched(Box::new(inst))
+    }
+
+    pub fn unpitched<T: UnpitchedInstrument + 'static>(inst: T) -> Self {
+        AnyInstrument::Unpitched(Box::new(inst))
+    }
+}
+
+pub trait PitchedInstrument {
+    fn process_voices(
+        &self,
+        ctx: &RenderContext,
+        voices: Vec<Voice>,
+    ) -> Vec<Float>;
+
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        let mut state = RenderState::default();
+
+        for measure in &part.measures {
+            let mut last_start_time_beats = state.time_beats;
+            for item in &measure.items {
+                match item {
+                    MeasureItem::Note(note) => {
+                        if !note.is_chord {
+                            // Cache the time cursor for chord use
+                            last_start_time_beats = state.time_beats;
+                        }
+
+                        if let Some(pitch) = &note.pitch {
+                            let freq = pitch.to_frequency();
+                            let midi = pitch.to_semitone();
+                            let duration_beats = note.duration as Float
+                                / state.divisions as Float;
+                            let duration_secs =
+                                duration_beats * state.seconds_per_beat();
+                            let start_time_secs = last_start_time_beats
+                                * state.seconds_per_beat();
+
+                            match note.tie {
+                                Some(StartStop::Start) => {
+                                    state.ongoing_ties.insert(
+                                        midi,
+                                        (start_time_secs, duration_secs),
+                                    );
+                                }
+                                Some(StartStop::Stop) => {
+                                    if let Some((prev_start, prev_duration)) =
+                                        state.ongoing_ties.remove(&midi)
+                                    {
+                                        let combined_duration =
+                                            prev_duration + duration_secs;
+                                        let voice = Voice {
+                                            freq,
+                                            start_time_secs: prev_start,
+                                            duration_secs: combined_duration,
+                                            velocity: state.velocity,
+                                        };
+                                        state.active_voices.push(voice);
+                                    } else {
+                                        // Treat it as a normal note if we have no matching start
+                                        let voice = Voice {
+                                            freq,
+                                            start_time_secs,
+                                            duration_secs,
+                                            velocity: state.velocity,
+                                        };
+                                        state.active_voices.push(voice);
+                                    }
+                                }
+                                _ => {
+                                    // Not part of a tie, render normally
+                                    let voice = Voice {
+                                        freq,
+                                        start_time_secs,
+                                        duration_secs,
+                                        velocity: state.velocity,
+                                    };
+                                    state.active_voices.push(voice);
+                                }
+                            }
+                        }
+
+                        if !note.is_chord {
+                            state.advance(note.duration);
+                        }
+                    }
+
+                    MeasureItem::Direction(dir) => match &dir.kind {
+                        DirectionType::Metronome { per_minute, .. } => {
+                            state.tempo_bpm = *per_minute as Float;
+                        }
+                        DirectionType::Dynamics(dynamics) => {
+                            state.velocity = dynamics.normalized_velocity();
+                        }
+                        _ => {}
+                    },
+
+                    // TODO duration is measured in ticks. convert to time
+                    MeasureItem::Forward(fwd) => {
+                        state.advance(fwd.duration);
+                    }
+
+                    MeasureItem::Backup(bak) => {
+                        state.rewind(bak.duration);
+                    }
+
+                    MeasureItem::Barline(_) => {}
+                }
+            }
+        }
+
+        self.process_voices(ctx, state.active_voices)
+    }
+}
+
 pub trait UnpitchedInstrument {
-    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float;
+    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float;
 
     /// Renders a MusicXML part
-    fn render_part(&mut self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut output = Vec::new();
         let mut state = RenderState::default();
         let sr = ctx.sample_rate;
@@ -35,7 +170,7 @@ pub trait UnpitchedInstrument {
 
                             for i in 0..n {
                                 let t = i as Float / sr as Float;
-                                let sample = self.synth(t, dur, &state);
+                                let sample = self.synth(t, dur, &mut state);
                                 output[start_sample + i] += sample;
                             }
                         }
@@ -154,6 +289,7 @@ impl ADSR {
     }
 }
 
+#[derive(Clone)]
 pub struct RenderContext {
     pub sample_rate: u32,
 }
@@ -166,6 +302,7 @@ pub struct RenderState {
     pub active_voices: Vec<Voice>,
     // Pitch => (start_time_beats, total_duration_beats)
     pub ongoing_ties: HashMap<u8, (Float, Float)>,
+    pub rng: StdRng,
 }
 
 impl Default for RenderState {
@@ -177,6 +314,7 @@ impl Default for RenderState {
             divisions: 480,
             active_voices: vec![],
             ongoing_ties: HashMap::new(),
+            rng: StdRng::seed_from_u64(1337),
         }
     }
 }
@@ -258,102 +396,11 @@ pub struct Synth {
 }
 
 impl Synth {
-    pub fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let mut state = RenderState::default();
-
-        for measure in &part.measures {
-            let mut last_start_time_beats = state.time_beats;
-            for item in &measure.items {
-                match item {
-                    MeasureItem::Note(note) => {
-                        if !note.is_chord {
-                            // Cache the time cursor for chord use
-                            last_start_time_beats = state.time_beats;
-                        }
-
-                        if let Some(pitch) = &note.pitch {
-                            let freq = pitch.to_frequency();
-                            let midi = pitch.to_semitone();
-                            let duration_beats = note.duration as Float
-                                / state.divisions as Float;
-                            let duration_secs =
-                                duration_beats * state.seconds_per_beat();
-                            let start_time_secs = last_start_time_beats
-                                * state.seconds_per_beat();
-
-                            match note.tie {
-                                Some(StartStop::Start) => {
-                                    state.ongoing_ties.insert(
-                                        midi,
-                                        (start_time_secs, duration_secs),
-                                    );
-                                }
-                                Some(StartStop::Stop) => {
-                                    if let Some((prev_start, prev_duration)) =
-                                        state.ongoing_ties.remove(&midi)
-                                    {
-                                        let combined_duration =
-                                            prev_duration + duration_secs;
-                                        let voice = Voice {
-                                            freq,
-                                            start_time_secs: prev_start,
-                                            duration_secs: combined_duration,
-                                            velocity: state.velocity,
-                                        };
-                                        state.active_voices.push(voice);
-                                    } else {
-                                        // Treat it as a normal note if we have no matching start
-                                        let voice = Voice {
-                                            freq,
-                                            start_time_secs,
-                                            duration_secs,
-                                            velocity: state.velocity,
-                                        };
-                                        state.active_voices.push(voice);
-                                    }
-                                }
-                                _ => {
-                                    // Not part of a tie, render normally
-                                    let voice = Voice {
-                                        freq,
-                                        start_time_secs,
-                                        duration_secs,
-                                        velocity: state.velocity,
-                                    };
-                                    state.active_voices.push(voice);
-                                }
-                            }
-                        }
-
-                        if !note.is_chord {
-                            state.advance(note.duration);
-                        }
-                    }
-
-                    MeasureItem::Direction(dir) => match &dir.kind {
-                        DirectionType::Metronome { per_minute, .. } => {
-                            state.tempo_bpm = *per_minute as Float;
-                        }
-                        DirectionType::Dynamics(dynamics) => {
-                            state.velocity = dynamics.normalized_velocity();
-                        }
-                        _ => {}
-                    },
-
-                    // TODO duration is measured in ticks. convert to time
-                    MeasureItem::Forward(fwd) => {
-                        state.advance(fwd.duration);
-                    }
-
-                    MeasureItem::Backup(bak) => {
-                        state.rewind(bak.duration);
-                    }
-
-                    MeasureItem::Barline(_) => {}
-                }
-            }
-        }
-
+    pub fn process_voices(
+        &self,
+        ctx: &RenderContext,
+        state: &mut RenderState,
+    ) -> Vec<Float> {
         // TODO calculate precice buffer len
         let buffer_len: usize = (ctx.sample_rate * 60) as usize;
 
@@ -443,8 +490,27 @@ pub struct KickDrum {
     pub transient: Option<Transient>,
 }
 
+impl Default for KickDrum {
+    fn default() -> Self {
+        Self {
+            amp_env: ParametricDecayEnvelope {
+                start: 1.0,
+                end: 0.0,
+                exponent: 3.0, // Fast exponential decay
+            },
+            freq_env: ParametricDecayEnvelope {
+                start: 120.0,  // Starts high for transient punch
+                end: 30.0,     // Drops to bass
+                exponent: 5.0, // Sharp downward pitch drop
+            },
+            distortion: Some(Distortion { drive: 1.2 }), // Adds grit
+            transient: None, // Optional: You can later add a snappy click here
+        }
+    }
+}
+
 impl UnpitchedInstrument for KickDrum {
-    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float {
+    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float {
         let amp = self.amp_env.value(t, dur);
         let freq = self.freq_env.value(t, dur);
         let mut sample =
@@ -459,19 +525,42 @@ impl UnpitchedInstrument for KickDrum {
 pub struct SnareDrum {
     pub amp_env: ParametricDecayEnvelope,
     pub noise_env: ParametricDecayEnvelope,
-    //let mut rng = StdRng::seed_from_u64(42); // deterministic noise
-    pub rng: StdRng,
     pub tone_env: Option<ParametricDecayEnvelope>,
     pub freq: Option<Float>, // optional tonal frequency
     pub distortion: Option<Distortion>,
     pub transient: Option<Transient>,
 }
 
+impl Default for SnareDrum {
+    fn default() -> Self {
+        Self {
+            amp_env: ParametricDecayEnvelope {
+                start: 1.0,
+                end: 0.0,
+                exponent: 3.0,
+            },
+            noise_env: ParametricDecayEnvelope {
+                start: 1.0,
+                end: 0.0,
+                exponent: 3.0,
+            },
+            tone_env: Some(ParametricDecayEnvelope {
+                start: 1.0,
+                end: 0.0,
+                exponent: 6.0,
+            }),
+            freq: Some(180.0), // optional tonal body
+            distortion: Some(Distortion { drive: 3.0 }),
+            transient: None,
+        }
+    }
+}
+
 impl UnpitchedInstrument for SnareDrum {
-    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float {
+    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float {
         let amp = self.amp_env.value(t, dur);
         let noise_amp = self.noise_env.value(t, dur);
-        let noise_sample: Float = self.rng.random_range(-1.0..1.0);
+        let noise_sample: Float = state.rng.random_range(-1.0..1.0);
 
         let tonal_sample =
             if let (Some(freq), Some(env)) = (self.freq, &self.tone_env) {
@@ -493,13 +582,24 @@ impl UnpitchedInstrument for SnareDrum {
 
 pub struct HiHat {
     pub amp_env: ParametricDecayEnvelope,
-    pub rng: StdRng,
+}
+
+impl Default for HiHat {
+    fn default() -> Self {
+        Self {
+            amp_env: ParametricDecayEnvelope {
+                start: 1.0,
+                end: 0.0,
+                exponent: 8.0,
+            },
+        }
+    }
 }
 
 impl UnpitchedInstrument for HiHat {
-    fn synth(&mut self, t: Float, dur: Float, state: &RenderState) -> Float {
+    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float {
         let amp = self.amp_env.value(t, dur);
-        let noise = self.rng.random_range(-1.0..1.0); // white noise
+        let noise = state.rng.random_range(-1.0..1.0); // white noise
         let sample = noise * amp * state.velocity;
         sample
     }

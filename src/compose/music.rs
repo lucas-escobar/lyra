@@ -18,10 +18,11 @@ pub struct Score {
     source: String,
 }
 
+#[derive(Default)]
 pub struct ScoreCreateInfo<'a> {
     pub title: &'a str,
-    pub composer: &'a str,
-    pub arranger: &'a str,
+    pub composer: Option<&'a str>,
+    pub arranger: Option<&'a str>,
     pub source: Option<&'a str>,
 }
 
@@ -30,18 +31,19 @@ impl Score {
         Self {
             parts: Vec::new(),
             work_title: opt.title.to_string(),
-            composer: opt.composer.to_string(),
-            arranger: opt.arranger.to_string(),
+            composer: opt.composer.unwrap_or_default().to_string(),
+            arranger: opt.arranger.unwrap_or_default().to_string(),
             source: opt.source.unwrap_or_default().to_string(),
         }
     }
 
-    pub fn part_by_name(&self, name: &str) -> Option<&Part> {
+    /// Get part by name
+    pub fn get_part(&self, name: &str) -> Option<&Part> {
         self.parts.iter().find(|p| p.name == name)
     }
 
     // Mutable version if needed
-    pub fn part_by_name_mut(&mut self, name: &str) -> Option<&mut Part> {
+    pub fn get_part_mut(&mut self, name: &str) -> Option<&mut Part> {
         self.parts.iter_mut().find(|p| p.name == name)
     }
 
@@ -518,7 +520,7 @@ pub struct Attributes {
 }
 
 impl Attributes {
-    pub fn new(ci: AttributesCreateInfo) -> Self {
+    pub fn new(ci: &AttributesCreateInfo) -> Self {
         let mut staves = None;
         if ci.clefs.len() > 1 {
             staves = Some(ci.clefs.len());
@@ -774,7 +776,7 @@ impl Measure {
     }
 
     /// Update the measure's attributes. Overwrites effective attributes.
-    pub fn attributes(&mut self, ci: AttributesCreateInfo) {
+    pub fn attributes(&mut self, ci: &AttributesCreateInfo) {
         assert!(
             self.items.len() == 0,
             "Attributes must be set before items are added to it"
@@ -806,6 +808,12 @@ impl Measure {
             placement: Some("below".to_string()),
             staff: None,
         }));
+    }
+
+    pub fn note_repeat(&mut self, note_str: &str, count: u32) {
+        for _ in 0..count {
+            self.note(note_str);
+        }
     }
 
     /// Convenience function to add a note to a measure.

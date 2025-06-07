@@ -1,11 +1,13 @@
 use hound::{SampleFormat, WavSpec, WavWriter};
+use std::fs::create_dir_all;
 use std::path::Path;
 
+/// Saves a mono or stereo buffer to a path relative to the caller of the executable
 pub fn save_to_wav(
+    path: &str,
+    sample_rate: u32,
     left: &[f64],
     right: Option<&[f64]>,
-    sample_rate: u32,
-    path: &Path,
 ) {
     let channels = if right.is_some() { 2 } else { 1 };
     let spec = WavSpec {
@@ -15,7 +17,11 @@ pub fn save_to_wav(
         sample_format: SampleFormat::Float,
     };
 
-    let mut writer = WavWriter::create(path, spec).unwrap();
+    let out_path = Path::new(path);
+    if let Some(parent) = out_path.parent() {
+        create_dir_all(parent).expect("Parent path should be created");
+    }
+    let mut writer = WavWriter::create(out_path, spec).unwrap();
 
     match right {
         Some(right_buf) => {

@@ -1,4 +1,7 @@
+use std::cell::RefCell;
 use std::f64::consts::PI;
+
+use crate::render::RenderContext;
 
 pub trait AudioEffect {
     fn process(
@@ -51,7 +54,24 @@ pub struct Track {
     pub effects: Option<Vec<Box<dyn AudioEffect>>>,
 }
 
+// Create track using part-instrument-fx
+pub struct TrackCreateInfo<'a> {
+    pub part: &'a crate::compose::Part,
+    pub instrument: &'a dyn crate::render::Instrument,
+    pub fx: Option<Vec<Box<dyn AudioEffect>>>,
+    pub ctx: &'a RenderContext,
+}
+
 impl Track {
+    pub fn new(ci: TrackCreateInfo<'_>) -> Self {
+        Self {
+            buffer: StereoBuffer::from_mono(
+                &ci.instrument.render_part(ci.part, ci.ctx),
+            ),
+            effects: ci.fx,
+        }
+    }
+
     pub fn process(&mut self, sample_rate: u32) {
         if let Some(effects) = &mut self.effects {
             for e in effects {
@@ -158,23 +178,35 @@ impl AudioEffect for SaturationEffect {
     }
 }
 
-// Processor
-pub struct Processor {
+// AudioProcessor
+pub struct AudioProcessor {
+    pub ctx: RenderContext,
     pub tracks: Vec<Track>,
     pub master_fx: Vec<Box<dyn AudioEffect>>,
 }
 
-impl Processor {
-    pub fn process(&mut self, sample_rate: u32) -> StereoBuffer {
+pub struct AudioProcessorCreateInfo<'a> {
+    pub ctx: &'a RenderContext,
+    pub tracks: Vec<Track>,
+    pub master_fx: Vec<Box<dyn AudioEffect>>,
+}
+
+impl AudioProcessor {
+    pub fn new(ci: AudioProcessorCreateInfo) -> Self {
+        Self { ctx: ci.ctx.clone(), tracks: ci.tracks, master_fx: ci.master_fx }
+    }
+
+    pub fn process(&mut self) -> StereoBuffer {
+        // TODO always uses first track as buff len
         let mut mix = StereoBuffer::new(self.tracks[0].buffer.len());
 
         for track in &mut self.tracks {
-            track.process(sample_rate);
+            track.process(self.ctx.sample_rate);
             mix.add(&track.buffer);
         }
 
         for fx in &mut self.master_fx {
-            fx.process(&mut mix.left, &mut mix.right, sample_rate);
+            fx.process(&mut mix.left, &mut mix.right, self.ctx.sample_rate);
         }
 
         mix
