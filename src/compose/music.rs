@@ -589,6 +589,73 @@ pub enum MeasureItem {
     Direction(Direction),
     Backup(Backup),
     Forward(Forward),
+    Barline(Barline),
+}
+
+// https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/barline/
+pub struct Barline {
+    bar_style: Option<BarStyle>,
+    ending: Option<Ending>,
+    repeat: Option<Repeat>,
+    //fermata: Option<Fermata>,
+    //coda: Option<Coda>,
+    //segno: Option<Segno>,
+    //wavy_line: Option<WavyLine>,
+    //footnote: Option<Footnote>,
+
+    // Attributes
+    //coda,
+    //divisions,
+    //id,
+    //location,
+    //segno
+}
+
+// TODO bar style elements can contain a color attribute too. This would require
+// a bar style struct. This enum would become BarStyleType
+pub enum BarStyle {
+    Dashed,
+    Dotted,
+    Heavy,
+    HeavyHeavy,
+    HeavyLight,
+    LightHeavy,
+    LightLight,
+    None,
+    Regular,
+    Short,
+    Tick,
+}
+
+impl BarStyle {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::Dashed => "dashed",
+            Self::Dotted => "dotted",
+            Self::Heavy => "heavy",
+            Self::HeavyHeavy => "heavy-heavy",
+            Self::HeavyLight => "heavy-light",
+            Self::LightHeavy => "light-heavy",
+            Self::LightLight => "light-light",
+            Self::None => "none",
+            Self::Regular => "regular",
+            Self::Short => "short",
+            Self::Tick => "tick",
+        }
+    }
+}
+
+// https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/ending/
+pub struct Ending {
+    content: String, // Usually 1. or 1.,2.
+
+    number: u8,   // ending number
+    kind: String, // Start, Stop, Discontinue
+}
+
+// https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/repeat/
+pub struct Repeat {
+    direction: String, // "backward" or "forward"
 }
 
 /// Representation of <backup> element. Moves the time cursor back a set duration

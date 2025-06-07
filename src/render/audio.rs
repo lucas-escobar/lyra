@@ -9,9 +9,58 @@ use rand::SeedableRng;
 /// Sample buffers in the render layer have double float precision
 type Float = f64;
 
-pub trait Instrument {
+pub trait UnpitchedInstrument {
+    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float;
+
     /// Renders a MusicXML part
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float>;
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        let mut output = Vec::new();
+        let mut state = RenderState::default();
+        let sr = ctx.sample_rate;
+
+        for m in &part.measures {
+            for item in &m.items {
+                match item {
+                    MeasureItem::Note(note) => {
+                        if note.unpitched.is_some() {
+                            let dur = state.ticks_to_secs(note.duration);
+                            let n = state.ticks_to_samples(note.duration, sr);
+                            let start_sample = (state.time_secs() * sr as Float)
+                                .floor()
+                                as usize;
+
+                            if output.len() < start_sample + n {
+                                output.resize(start_sample + n, 0.0);
+                            }
+
+                            for i in 0..n {
+                                let t = i as Float / sr as Float;
+                                let sample = self.synth(t, dur, &state);
+                                output[start_sample + i] += sample;
+                            }
+                        }
+                        state.advance(note.duration);
+                    }
+
+                    MeasureItem::Direction(dir) => match &dir.kind {
+                        DirectionType::Metronome { per_minute, .. } => {
+                            state.tempo_bpm = *per_minute as Float;
+                        }
+                        DirectionType::Dynamics(dynamics) => {
+                            state.velocity = dynamics.normalized_velocity();
+                        }
+                        _ => {}
+                    },
+
+                    MeasureItem::Barline(_) => {}
+
+                    _ => {}
+                }
+            }
+        }
+
+        output
+    }
 }
 
 pub trait Envelope: Send + Sync {
@@ -208,7 +257,7 @@ pub struct Synth {
     pub envelope: ADSR,
 }
 
-impl Instrument for Synth {
+impl Synth {
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut state = RenderState::default();
 
@@ -299,6 +348,8 @@ impl Instrument for Synth {
                     MeasureItem::Backup(bak) => {
                         state.rewind(bak.duration);
                     }
+
+                    MeasureItem::Barline(_) => {}
                 }
             }
         }
@@ -392,204 +443,64 @@ pub struct KickDrum {
     pub transient: Option<Transient>,
 }
 
-impl Instrument for KickDrum {
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let mut output = Vec::new();
-        let mut state = RenderState::default();
-        let sr = ctx.sample_rate;
-
-        for m in &part.measures {
-            for item in &m.items {
-                match item {
-                    MeasureItem::Note(note) => {
-                        if note.unpitched.is_some() {
-                            let dur = state.ticks_to_secs(note.duration);
-                            let n = state.ticks_to_samples(note.duration, sr);
-
-                            let start_sample = (state.time_secs() * sr as Float)
-                                .floor()
-                                as usize;
-
-                            if output.len() < start_sample + n {
-                                output.resize(start_sample + n, 0.0);
-                            }
-
-                            for i in 0..n {
-                                let t = i as Float / sr as Float;
-                                let amp = self.amp_env.value(t, dur);
-                                let freq = self.freq_env.value(t, dur);
-                                let mut sample = OscillatorType::Sine
-                                    .sample(freq, t)
-                                    * amp
-                                    * state.velocity;
-                                if let Some(d) = &self.distortion {
-                                    sample = d.apply(sample)
-                                };
-                                output[start_sample + i] += sample;
-                            }
-                        }
-                        state.advance(note.duration);
-                    }
-
-                    MeasureItem::Direction(dir) => match &dir.kind {
-                        DirectionType::Metronome { per_minute, .. } => {
-                            state.tempo_bpm = *per_minute as Float;
-                        }
-                        DirectionType::Dynamics(dynamics) => {
-                            state.velocity = dynamics.normalized_velocity();
-                        }
-                        _ => {}
-                    },
-
-                    _ => {}
-                }
-            }
-        }
-
-        output
+impl UnpitchedInstrument for KickDrum {
+    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float {
+        let amp = self.amp_env.value(t, dur);
+        let freq = self.freq_env.value(t, dur);
+        let mut sample =
+            OscillatorType::Sine.sample(freq, t) * amp * state.velocity;
+        if let Some(d) = &self.distortion {
+            sample = d.apply(sample)
+        };
+        sample
     }
 }
 
 pub struct SnareDrum {
     pub amp_env: ParametricDecayEnvelope,
     pub noise_env: ParametricDecayEnvelope,
+    //let mut rng = StdRng::seed_from_u64(42); // deterministic noise
+    pub rng: StdRng,
     pub tone_env: Option<ParametricDecayEnvelope>,
     pub freq: Option<Float>, // optional tonal frequency
     pub distortion: Option<Distortion>,
     pub transient: Option<Transient>,
 }
 
-impl Instrument for SnareDrum {
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let mut output = Vec::new();
-        let mut state = RenderState::default();
-        let sr = ctx.sample_rate;
+impl UnpitchedInstrument for SnareDrum {
+    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float {
+        let amp = self.amp_env.value(t, dur);
+        let noise_amp = self.noise_env.value(t, dur);
+        let noise_sample: Float = self.rng.random_range(-1.0..1.0);
 
-        let mut rng = StdRng::seed_from_u64(42); // deterministic noise
+        let tonal_sample =
+            if let (Some(freq), Some(env)) = (self.freq, &self.tone_env) {
+                let tone_amp = env.value(t, dur);
+                (2.0 * PI * freq * t).sin() * tone_amp
+            } else {
+                0.0
+            };
 
-        for measure in &part.measures {
-            for item in &measure.items {
-                match item {
-                    MeasureItem::Note(note) => {
-                        if note.unpitched.is_some() {
-                            let dur = state.ticks_to_secs(note.duration);
-                            let n = state.ticks_to_samples(note.duration, sr);
+        let mut sample = (noise_sample * noise_amp) + tonal_sample;
+        sample *= amp * state.velocity;
 
-                            let start_sample = (state.time_secs() * sr as Float)
-                                .floor()
-                                as usize;
-
-                            if output.len() < start_sample + n {
-                                output.resize(start_sample + n, 0.0);
-                            }
-
-                            for i in 0..n {
-                                let t = i as Float / sr as Float;
-
-                                let amp = self.amp_env.value(t, dur);
-                                let noise_amp = self.noise_env.value(t, dur);
-                                let noise_sample: Float =
-                                    rng.random_range(-1.0..1.0);
-
-                                let tonal_sample =
-                                    if let (Some(freq), Some(env)) =
-                                        (self.freq, &self.tone_env)
-                                    {
-                                        let tone_amp = env.value(t, dur);
-                                        (2.0 * PI * freq * t).sin() * tone_amp
-                                    } else {
-                                        0.0
-                                    };
-
-                                let mut sample =
-                                    (noise_sample * noise_amp) + tonal_sample;
-                                sample *= amp * state.velocity;
-
-                                if let Some(d) = &self.distortion {
-                                    sample = d.apply(sample)
-                                };
-
-                                output[start_sample + i] += sample;
-                            }
-                        }
-
-                        state.advance(note.duration);
-                    }
-
-                    MeasureItem::Direction(dir) => match &dir.kind {
-                        DirectionType::Metronome { per_minute, .. } => {
-                            state.tempo_bpm = *per_minute as Float;
-                        }
-                        DirectionType::Dynamics(dynamics) => {
-                            state.velocity = dynamics.normalized_velocity();
-                        }
-                        _ => {}
-                    },
-
-                    _ => {}
-                }
-            }
-        }
-
-        output
+        if let Some(d) = &self.distortion {
+            sample = d.apply(sample)
+        };
+        sample
     }
 }
 
 pub struct HiHat {
     pub amp_env: ParametricDecayEnvelope,
+    pub rng: StdRng,
 }
 
-impl Instrument for HiHat {
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let mut output = Vec::new();
-        let mut state = RenderState::default();
-        let sr = ctx.sample_rate;
-
-        let mut rng = StdRng::seed_from_u64(12345);
-
-        for measure in &part.measures {
-            for item in &measure.items {
-                match item {
-                    MeasureItem::Note(note) => {
-                        if note.unpitched.is_some() {
-                            let dur = state.ticks_to_secs(note.duration);
-                            let n = state.ticks_to_samples(note.duration, sr);
-
-                            let start_sample = (state.time_secs() * sr as Float)
-                                .floor()
-                                as usize;
-
-                            if output.len() < start_sample + n {
-                                output.resize(start_sample + n, 0.0);
-                            }
-
-                            for i in 0..n {
-                                let t = i as Float / sr as Float;
-                                let amp = self.amp_env.value(t, dur);
-                                let noise = rng.random_range(-1.0..1.0); // white noise
-                                let sample = noise * amp * state.velocity;
-                                output[start_sample + i] += sample;
-                            }
-                        }
-
-                        state.advance(note.duration);
-                    }
-
-                    MeasureItem::Direction(dir) => match &dir.kind {
-                        DirectionType::Metronome { per_minute, .. } => {
-                            state.tempo_bpm = *per_minute as Float;
-                        }
-                        DirectionType::Dynamics(dynamics) => {
-                            state.velocity = dynamics.normalized_velocity();
-                        }
-                        _ => {}
-                    },
-
-                    _ => {}
-                }
-            }
-        }
-
-        output
+impl UnpitchedInstrument for HiHat {
+    fn synth(&self, t: Float, dur: Float, state: &RenderState) -> Float {
+        let amp = self.amp_env.value(t, dur);
+        let noise = self.rng.random_range(-1.0..1.0); // white noise
+        let sample = noise * amp * state.velocity;
+        sample
     }
 }
