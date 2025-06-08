@@ -1,3 +1,5 @@
+use super::types::Float;
+
 pub trait Envelope: Send + Sync {
     /// Returns a value from the envelope based on current time.
     fn value(&self, t: Float, duration: Float) -> Float;

@@ -202,12 +202,6 @@ pub trait UnpitchedInstrument {
     }
 }
 
-#[derive(Clone)]
-/// Immutable configuration use for rendering
-pub struct RenderContext {
-    pub sample_rate: u32,
-}
-
 /// Mutable state used during the rendering process
 pub struct RenderState {
     pub time_beats: Float,
