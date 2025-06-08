@@ -1,5 +1,12 @@
 pub mod audio;
-pub mod wav;
+pub mod effect;
+pub mod envelope;
+pub mod instrument;
+pub mod process;
+pub mod signal;
+pub mod types;
 
 pub use audio::*;
-pub use wav::*;
+pub use envelope::*;
+pub use instrument::*;
+pub use process::*;
