@@ -3,13 +3,11 @@
 use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
 
 use super::envelope::{Envelope, ParametricDecayEnvelope, ADSR};
+use super::processor::RenderContext;
+use super::signal::Oscillator;
 use super::types::Float;
 
 use std::collections::HashMap;
-
-use rand::rngs::StdRng;
-use rand::Rng;
-use rand::SeedableRng;
 
 pub trait Instrument: 'static {
     /// Render a MusicXML part into a sample buffer. This is the main interface
@@ -211,7 +209,6 @@ pub struct RenderState {
     pub active_voices: Vec<Voice>,
     // Pitch => (start_time_beats, total_duration_beats)
     pub ongoing_ties: HashMap<u8, (Float, Float)>,
-    pub rng: StdRng,
 }
 
 impl Default for RenderState {
@@ -223,7 +220,6 @@ impl Default for RenderState {
             divisions: 480,
             active_voices: vec![],
             ongoing_ties: HashMap::new(),
-            rng: StdRng::seed_from_u64(1337),
         }
     }
 }
@@ -273,7 +269,7 @@ pub struct Voice {
 // CONCRETE INSTRUMENTS
 
 pub struct Synth {
-    pub oscillator: OscillatorType,
+    pub oscillator: Oscillator,
     // TODO make envelope choice more flexible
     pub envelope: ADSR,
 }

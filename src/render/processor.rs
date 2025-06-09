@@ -1,3 +1,5 @@
+use super::wav::save_to_wav;
+
 #[derive(Clone)]
 /// Immutable configuration use for rendering
 pub struct RenderContext {
@@ -93,6 +95,11 @@ pub struct AudioProcessorCreateInfo<'a> {
 impl AudioProcessor {
     pub fn new(ci: AudioProcessorCreateInfo) -> Self {
         Self { ctx: ci.ctx.clone(), tracks: ci.tracks, master_fx: ci.master_fx }
+    }
+
+    pub fn save_to(&self, path: &str) {
+        let buf = self.process();
+        save_to_wav(path, self.ctx.sample_rate, &buf.left, Some(&buf.right));
     }
 
     pub fn process(&mut self) -> StereoBuffer {

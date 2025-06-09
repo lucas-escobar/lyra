@@ -1,10 +1,8 @@
 use lyra::compose::{AttributesCreateInfo, Score, ScoreCreateInfo};
-use lyra::process::{
-    AudioProcessor, AudioProcessorCreateInfo, GainEffect, Track,
-    TrackCreateInfo,
-};
 use lyra::render::{
-    save_to_wav, AnyInstrument, HiHat, KickDrum, RenderContext, SnareDrum,
+    save_to_wav, AnyInstrument, AudioProcessor, AudioProcessorCreateInfo,
+    GainEffect, HiHat, KickDrum, RenderContext, SnareDrum, Track,
+    TrackCreateInfo,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create and process tracks
     let ctx = &RenderContext { sample_rate: SAMPLE_RATE };
-    let buf = AudioProcessor::new(AudioProcessorCreateInfo {
+    AudioProcessor::new(AudioProcessorCreateInfo {
         ctx,
         tracks: vec![
             Track::new(TrackCreateInfo {
@@ -83,9 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
         master_fx: vec![Box::new(GainEffect { gain: 0.8 })],
     })
-    .process();
-
-    save_to_wav(OUT_PATH, SAMPLE_RATE, &buf.left, Some(&buf.right));
+    .save_to(OUT_PATH);
 
     Ok(())
 }
