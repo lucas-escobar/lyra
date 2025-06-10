@@ -39,15 +39,55 @@ impl AnyInstrument {
 }
 
 pub trait PitchedInstrument {
-    fn process_voices(
+    fn process_note_events(
         &self,
         ctx: &RenderContext,
-        voices: Vec<NoteEvent>,
-    ) -> Vec<Float>;
+        note_events: Vec<NoteEvent>,
+    ) -> Vec<Float> {
+        let buf: Vec<Float> = !vec![];
+        let sr = ctx.sample_rate;
+
+        for e in &note_events {
+            let dur = (e.end - e.start) + self.envelope.release_duration();
+            let n_event_samples: usize = dur * sr;
+            let start_sample: usize = e.start * sr;
+
+            for i in 0..n_event_samples {
+                let t: Float = i / sr;
+            }
+        }
+
+        //let full_duration_secs =
+        //    voice.duration_secs + self.envelope.release_time();
+        //let start_sample =
+        //    (voice.start_time_secs * ctx.sample_rate as Float).round() as
+        // usize; let num_samples =
+        //    (full_duration_secs * ctx.sample_rate as Float).round() as usize;
+
+        //for i in 0..num_samples {
+        //    let t = i as Float / ctx.sample_rate as Float;
+        //    let amp = self.envelope.value(t, voice.duration_secs);
+        //    let sample =
+        //        self.oscillator.sample(voice.freq, t) * amp * voice.velocity;
+        //    let idx = start_sample + i;
+
+        //    if idx < buffer_len {
+        //        mix_buffer[idx] += sample;
+        //        loudness_sum[idx] += amp * voice.velocity;
+        //    }
+        //}
+
+        buf
+    }
 
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut state = RenderState::default();
 
+        // MusicXML part will collect note events during parsing
+        let note_events: Vec<NoteEvent> = vec![];
+
+        // Flatten measures
+        // TODO delegate this to a part fn
         let items: Vec<&MeasureItem> =
             part.measures.iter().flat_map(|m| m.items.iter()).collect();
 
@@ -62,10 +102,10 @@ pub trait PitchedInstrument {
 
                     if let Some(pitch) = &note.pitch {
                         let mut event = NoteEvent {
-                            freq: pitch.to_frequency(),
                             velocity: state.velocity,
                             start: state.saved_cursor,
                             end: state.saved_cursor + note_duration,
+                            freq: Some(pitch.frequency()),
                         };
 
                         match note.tie {
@@ -93,8 +133,14 @@ pub trait PitchedInstrument {
                             }
                             None => {}
                         }
-
-                        state.active_voices.push(event);
+                        note_events.push(event);
+                    } else if let Some(unpitched) = &note.unpitched {
+                        note_events.push(NoteEvent {
+                            velocity: state.velocity,
+                            start: state.saved_cursor,
+                            end: state.saved_cursor + note_duration,
+                            freq: None,
+                        });
                     }
 
                     if !note.is_chord {
@@ -114,18 +160,18 @@ pub trait PitchedInstrument {
 
                 // TODO duration is measured in ticks. convert to time
                 MeasureItem::Forward(fwd) => {
-                    state.advance(fwd.duration);
+                    state.cursor += state.ticks_to_secs(fwd.duration);
                 }
 
                 MeasureItem::Backup(bak) => {
-                    state.rewind(bak.duration);
+                    state.cursor -= state.ticks_to_secs(bak.duration);
                 }
 
                 MeasureItem::Barline(_) => {}
             }
         }
 
-        self.process_voices(ctx, state.active_voices)
+        self.process_note_events(ctx, note_events)
     }
 }
 
@@ -250,7 +296,7 @@ impl RenderState {
 // voices. One note is assigned to each voice. This in inefficient; check if
 // this matters.
 pub struct NoteEvent {
-    pub freq: Float,
+    pub freq: Option<Float>,
     pub velocity: Float,
     pub start: Seconds,
     pub end: Seconds,
