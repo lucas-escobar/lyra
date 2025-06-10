@@ -1,3 +1,4 @@
+/// Tools for generating and modulating signals
 use std::cell::RefCell;
 use std::f64::consts::PI;
 
@@ -117,6 +118,219 @@ impl<'a> ModMatrix<'a> {
         for r in &mut self.routes {
             let val = r.source.sample(t) * r.depth;
             r.target.apply_modulation(val);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvelopeStage {
+    pub kind: StageKind,
+    pub start_level: Float,
+    pub end_level: Float,
+}
+
+enum StageKind {
+    /// A ramp with a time duration and curvature.
+    /// curve: 1.0 = linear, >1.0 = exponential, <1.0 = logarithmic
+    Ramp { duration: Float, curve: Float },
+
+    /// Sustain level; this stage is held until the gate is released.
+    Sustain,
+
+    /// Hold a value for a fixed time (no ramp).
+    Hold { duration: Float },
+
+    /// Step to a new level immediately.
+    Step,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParametricEnvelope {
+    pub stages: Vec<EnvelopeStage>,
+    pub loop_point: Option<usize>, // optional: loop stage N to end until note off
+    pub sustain_point: Option<usize>, // optional: hold here until note off
+    pub release_stages: Vec<EnvelopeStage>,
+    pub gate_on_time: Option<Float>,
+    pub gate_off_time: Option<Float>,
+}
+
+impl ParametricEnvelope {
+    pub fn new(
+        stages: Vec<EnvelopeStage>,
+        release_stages: Vec<EnvelopeStage>,
+    ) -> Self {
+        Self {
+            stages,
+            loop_point: None,
+            sustain_point: None,
+            release_stages,
+            gate_on_time: None,
+            gate_off_time: None,
+        }
+    }
+
+    pub fn gate_on(&mut self, time: Float) {
+        self.gate_on_time = Some(time);
+        self.gate_off_time = None;
+    }
+
+    pub fn gate_off(&mut self, time: Float) {
+        self.gate_off_time = Some(time);
+    }
+
+    pub fn value(&self, now: Float) -> Float {
+        let gate_on = match self.gate_on_time {
+            Some(t) => t,
+            None => return 0.0,
+        };
+
+        let t = now - gate_on;
+
+        // If note is still on
+        if self.gate_off_time.is_none() {
+            let mut cursor = 0.0;
+            for (i, stage) in self.stages.iter().enumerate() {
+                match &stage.kind {
+                    StageKind::Ramp { duration, curve } => {
+                        if t < cursor + duration {
+                            let local_t = t - cursor;
+                            let x = local_t / duration;
+                            let shaped = (1.0 - x).powf(*curve);
+                            return stage.end_level
+                                + (stage.start_level - stage.end_level)
+                                    * shaped;
+                        }
+                        cursor += duration;
+                    }
+                    StageKind::Hold { duration } => {
+                        if t < cursor + duration {
+                            return stage.start_level;
+                        }
+                        cursor += duration;
+                    }
+                    StageKind::Step => {
+                        if t < cursor + 0.001 {
+                            return stage.end_level;
+                        }
+                        cursor += 0.001;
+                    }
+                    StageKind::Sustain => {
+                        if let Some(sustain_idx) = self.sustain_point {
+                            if i == sustain_idx {
+                                return stage.start_level;
+                            }
+                        }
+                        cursor += 0.0; // Sustain is zero-time (held)
+                    }
+                }
+            }
+
+            return self.stages.last().map(|s| s.end_level).unwrap_or(0.0);
+        }
+
+        // Note is off, proceed through release stages
+        let release_t = now - self.gate_off_time.unwrap();
+        let mut cursor = 0.0;
+        for stage in &self.release_stages {
+            match &stage.kind {
+                StageKind::Ramp { duration, curve } => {
+                    if release_t < cursor + duration {
+                        let local_t = release_t - cursor;
+                        let x = local_t / duration;
+                        let shaped = (1.0 - x).powf(*curve);
+                        return stage.end_level
+                            + (stage.start_level - stage.end_level) * shaped;
+                    }
+                    cursor += duration;
+                }
+                StageKind::Hold { duration } => {
+                    if release_t < cursor + duration {
+                        return stage.start_level;
+                    }
+                    cursor += duration;
+                }
+                StageKind::Step => {
+                    if release_t < cursor + 0.001 {
+                        return stage.end_level;
+                    }
+                    cursor += 0.001;
+                }
+                StageKind::Sustain => {
+                    unreachable!("Sustain not allowed in release phase")
+                }
+            }
+        }
+
+        0.0 // End of release phase
+    }
+
+    pub fn release_time(&self) -> Float {
+        self.release_stages
+            .iter()
+            .map(|s| match &s.kind {
+                StageKind::Ramp { duration, .. } => *duration,
+                StageKind::Hold { duration } => *duration,
+                StageKind::Step => 0.001,
+                StageKind::Sustain => 0.0,
+            })
+            .sum()
+    }
+
+    /// Convenience for standard ADSR
+    pub fn from_adsr(
+        attack: Float,
+        decay: Float,
+        sustain: Float,
+        release: Float,
+    ) -> Self {
+        Self {
+            stages: vec![
+                EnvelopeStage {
+                    kind: StageKind::Ramp { duration: attack, curve: 1.0 },
+                    start_level: 0.0,
+                    end_level: 1.0,
+                },
+                EnvelopeStage {
+                    kind: StageKind::Ramp { duration: decay, curve: 1.0 },
+                    start_level: 1.0,
+                    end_level: sustain,
+                },
+                EnvelopeStage {
+                    kind: StageKind::Sustain,
+                    start_level: sustain,
+                    end_level: sustain,
+                },
+            ],
+            release_stages: vec![EnvelopeStage {
+                kind: StageKind::Ramp { duration: release, curve: 1.0 },
+                start_level: sustain,
+                end_level: 0.0,
+            }],
+            sustain_point: Some(2),
+            loop_point: None,
+            gate_on_time: None,
+            gate_off_time: None,
+        }
+    }
+
+    /// Convenience for parametric decay envelope
+    pub fn from_decay(
+        start: Float,
+        end: Float,
+        duration: Float,
+        curve: Float,
+    ) -> Self {
+        Self {
+            stages: vec![EnvelopeStage {
+                kind: StageKind::Ramp { duration, curve },
+                start_level: start,
+                end_level: end,
+            }],
+            release_stages: vec![],
+            loop_point: None,
+            sustain_point: None,
+            gate_on_time: None,
+            gate_off_time: None,
         }
     }
 }

@@ -4,6 +4,7 @@ max_width = 80
 use_small_heuristics = "Max"
 blank_lines_upper_bound = 1
 group_imports = "StdExternalCrate"
+wrap_comments = true
 # Put each function parameter on its own line if the signature is long
 #fn_params_layout = "Vertical"
 

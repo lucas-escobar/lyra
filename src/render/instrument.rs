@@ -1,13 +1,12 @@
 // TODO remove the compose dependencies by making intermediate representation
 // of Part
-use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
-
-use super::envelope::{Envelope, ParametricDecayEnvelope, ADSR};
-use super::processor::RenderContext;
-use super::signal::Oscillator;
-use super::types::Float;
-
 use std::collections::HashMap;
+
+use super::envelope::{Envelope, ADSR};
+use super::processor::RenderContext;
+use super::signal::{Oscillator, ParametricEnvelope};
+use super::types::{Float, Seconds};
+use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
 
 pub trait Instrument: 'static {
     /// Render a MusicXML part into a sample buffer. This is the main interface
@@ -43,102 +42,86 @@ pub trait PitchedInstrument {
     fn process_voices(
         &self,
         ctx: &RenderContext,
-        voices: Vec<Voice>,
+        voices: Vec<NoteEvent>,
     ) -> Vec<Float>;
 
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut state = RenderState::default();
 
-        for measure in &part.measures {
-            let mut last_start_time_beats = state.time_beats;
-            for item in &measure.items {
-                match item {
-                    MeasureItem::Note(note) => {
-                        if !note.is_chord {
-                            // Cache the time cursor for chord use
-                            last_start_time_beats = state.time_beats;
-                        }
+        let items: Vec<&MeasureItem> =
+            part.measures.iter().flat_map(|m| m.items.iter()).collect();
 
-                        if let Some(pitch) = &note.pitch {
-                            let freq = pitch.to_frequency();
-                            let midi = pitch.to_semitone();
-                            let duration_beats = note.duration as Float
-                                / state.divisions as Float;
-                            let duration_secs =
-                                duration_beats * state.seconds_per_beat();
-                            let start_time_secs = last_start_time_beats
-                                * state.seconds_per_beat();
+        for item in &items {
+            match item {
+                MeasureItem::Note(note) => {
+                    if !note.is_chord {
+                        state.save_cursor();
+                    }
 
-                            match note.tie {
-                                Some(StartStop::Start) => {
-                                    state.ongoing_ties.insert(
-                                        midi,
-                                        (start_time_secs, duration_secs),
-                                    );
-                                }
-                                Some(StartStop::Stop) => {
-                                    if let Some((prev_start, prev_duration)) =
-                                        state.ongoing_ties.remove(&midi)
-                                    {
-                                        let combined_duration =
-                                            prev_duration + duration_secs;
-                                        let voice = Voice {
-                                            freq,
-                                            start_time_secs: prev_start,
-                                            duration_secs: combined_duration,
-                                            velocity: state.velocity,
-                                        };
-                                        state.active_voices.push(voice);
-                                    } else {
-                                        // Treat it as a normal note if we have no matching start
-                                        let voice = Voice {
-                                            freq,
-                                            start_time_secs,
-                                            duration_secs,
-                                            velocity: state.velocity,
-                                        };
-                                        state.active_voices.push(voice);
-                                    }
-                                }
-                                _ => {
-                                    // Not part of a tie, render normally
-                                    let voice = Voice {
-                                        freq,
-                                        start_time_secs,
-                                        duration_secs,
-                                        velocity: state.velocity,
-                                    };
-                                    state.active_voices.push(voice);
+                    let note_duration = state.ticks_to_secs(note.duration);
+
+                    if let Some(pitch) = &note.pitch {
+                        let mut event = NoteEvent {
+                            freq: pitch.to_frequency(),
+                            velocity: state.velocity,
+                            start: state.saved_cursor,
+                            end: state.saved_cursor + note_duration,
+                        };
+
+                        match note.tie {
+                            Some(StartStop::Start) => {
+                                state.ongoing_ties.insert(
+                                    pitch.to_semitone(),
+                                    (state.saved_cursor, note_duration),
+                                );
+
+                                // do not push to event buffer, this is a tie
+                                // so the event is not over yet
+                                continue;
+                            }
+                            Some(StartStop::Stop) => {
+                                if let Some((prev_start, prev_duration)) = state
+                                    .ongoing_ties
+                                    .remove(&pitch.to_semitone())
+                                {
+                                    // Change note event timing based on tie
+                                    event.start = prev_start;
+                                    event.end = prev_start
+                                        + prev_duration
+                                        + note_duration;
                                 }
                             }
+                            None => {}
                         }
 
-                        if !note.is_chord {
-                            state.advance(note.duration);
-                        }
+                        state.active_voices.push(event);
                     }
 
-                    MeasureItem::Direction(dir) => match &dir.kind {
-                        DirectionType::Metronome { per_minute, .. } => {
-                            state.tempo_bpm = *per_minute as Float;
-                        }
-                        DirectionType::Dynamics(dynamics) => {
-                            state.velocity = dynamics.normalized_velocity();
-                        }
-                        _ => {}
-                    },
-
-                    // TODO duration is measured in ticks. convert to time
-                    MeasureItem::Forward(fwd) => {
-                        state.advance(fwd.duration);
+                    if !note.is_chord {
+                        state.cursor += note_duration;
                     }
-
-                    MeasureItem::Backup(bak) => {
-                        state.rewind(bak.duration);
-                    }
-
-                    MeasureItem::Barline(_) => {}
                 }
+
+                MeasureItem::Direction(dir) => match &dir.kind {
+                    DirectionType::Metronome { per_minute, .. } => {
+                        state.tempo_bpm = *per_minute as Float;
+                    }
+                    DirectionType::Dynamics(dynamics) => {
+                        state.velocity = dynamics.normalized_velocity();
+                    }
+                    _ => {}
+                },
+
+                // TODO duration is measured in ticks. convert to time
+                MeasureItem::Forward(fwd) => {
+                    state.advance(fwd.duration);
+                }
+
+                MeasureItem::Backup(bak) => {
+                    state.rewind(bak.duration);
+                }
+
+                MeasureItem::Barline(_) => {}
             }
         }
 
@@ -151,9 +134,10 @@ pub trait UnpitchedInstrument {
 
     /// Renders a MusicXML part
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
-        let mut output = Vec::new();
         let mut state = RenderState::default();
         let sr = ctx.sample_rate;
+
+        let mut output = Vec::new();
 
         for m in &part.measures {
             for item in &m.items {
@@ -195,18 +179,18 @@ pub trait UnpitchedInstrument {
                 }
             }
         }
-
         output
     }
 }
 
 /// Mutable state used during the rendering process
 pub struct RenderState {
-    pub time_beats: Float,
+    pub cursor: Seconds,
+    pub saved_cursor: Seconds,
     pub tempo_bpm: Float,
     pub velocity: Float,
     pub divisions: u32,
-    pub active_voices: Vec<Voice>,
+    pub active_voices: Vec<NoteEvent>,
     // Pitch => (start_time_beats, total_duration_beats)
     pub ongoing_ties: HashMap<u8, (Float, Float)>,
 }
@@ -220,6 +204,7 @@ impl Default for RenderState {
             divisions: 480,
             active_voices: vec![],
             ongoing_ties: HashMap::new(),
+            last_start_time_beats: 0.0,
         }
     }
 }
@@ -246,24 +231,29 @@ impl RenderState {
         dur_beats * self.seconds_per_beat()
     }
 
-    pub fn advance(&mut self, duration_divs: u32) {
-        let duration_beats = duration_divs as Float / self.divisions as Float;
-        self.time_beats += duration_beats;
+    pub fn save_cursor(&mut self) {
+        self.saved_cursor = self.cursor;
     }
 
-    pub fn rewind(&mut self, duration_divs: u32) {
-        let duration_beats = duration_divs as Float / self.divisions as Float;
-        self.time_beats -= duration_beats;
-    }
+    //pub fn advance(&mut self, duration_divs: u32) {
+    //    let duration_beats = duration_divs as Float / self.divisions as Float;
+    //    self.time_beats += duration_beats;
+    //}
+
+    //pub fn rewind(&mut self, duration_divs: u32) {
+    //    let duration_beats = duration_divs as Float / self.divisions as Float;
+    //    self.time_beats -= duration_beats;
+    //}
 }
 
-// TODO pitched instruments collect all of the notes found in a part into voices.
-// One note is assigned to each voice. This in inefficient; check if this matters.
-pub struct Voice {
+// TODO pitched instruments collect all of the notes found in a part into
+// voices. One note is assigned to each voice. This in inefficient; check if
+// this matters.
+pub struct NoteEvent {
     pub freq: Float,
-    pub start_time_secs: Float,
-    pub duration_secs: Float,
     pub velocity: Float,
+    pub start: Seconds,
+    pub end: Seconds,
 }
 
 // CONCRETE INSTRUMENTS
@@ -352,8 +342,8 @@ impl Transient {
 }
 
 pub struct KickDrum {
-    pub amp_env: ParametricDecayEnvelope,
-    pub freq_env: ParametricDecayEnvelope,
+    pub amp_env: ParametricEnvelope,
+    pub freq_env: ParametricEnvelope,
     pub distortion: Option<Distortion>,
     pub transient: Option<Transient>,
 }
@@ -361,12 +351,12 @@ pub struct KickDrum {
 impl Default for KickDrum {
     fn default() -> Self {
         Self {
-            amp_env: ParametricDecayEnvelope {
+            amp_env: ParametricEnvelope {
                 start: 1.0,
                 end: 0.0,
                 exponent: 3.0, // Fast exponential decay
             },
-            freq_env: ParametricDecayEnvelope {
+            freq_env: ParametricEnvelope {
                 start: 120.0,  // Starts high for transient punch
                 end: 30.0,     // Drops to bass
                 exponent: 5.0, // Sharp downward pitch drop
@@ -390,11 +380,15 @@ impl UnpitchedInstrument for KickDrum {
     }
 }
 
+pub struct Envelopes {
+    pub amplitude: ParametricEnvelope,
+    pub noise: ParametricEnvelope,
+    pub tone: Option<ParametricEnvelope>,
+}
+
 pub struct SnareDrum {
-    pub amp_env: ParametricDecayEnvelope,
-    pub noise_env: ParametricDecayEnvelope,
-    pub tone_env: Option<ParametricDecayEnvelope>,
-    pub freq: Option<Float>, // optional tonal frequency
+    pub envs: Envelopes,
+    pub freq: Option<Hz>,
     pub distortion: Option<Distortion>,
     pub transient: Option<Transient>,
 }
@@ -402,21 +396,9 @@ pub struct SnareDrum {
 impl Default for SnareDrum {
     fn default() -> Self {
         Self {
-            amp_env: ParametricDecayEnvelope {
-                start: 1.0,
-                end: 0.0,
-                exponent: 3.0,
-            },
-            noise_env: ParametricDecayEnvelope {
-                start: 1.0,
-                end: 0.0,
-                exponent: 3.0,
-            },
-            tone_env: Some(ParametricDecayEnvelope {
-                start: 1.0,
-                end: 0.0,
-                exponent: 6.0,
-            }),
+            amp_env: ParametricEnvelope::from_decay(1.0, 0.0, 3.0),
+            noise_env: ParametricEnvelope::from_decay(1.0, 0.0, 3.0),
+            tone_env: ParametricEnvelope::from_decay(1.0, 0.0, 6.0),
             freq: Some(180.0), // optional tonal body
             distortion: Some(Distortion { drive: 3.0 }),
             transient: None,
@@ -433,7 +415,7 @@ impl UnpitchedInstrument for SnareDrum {
         let tonal_sample =
             if let (Some(freq), Some(env)) = (self.freq, &self.tone_env) {
                 let tone_amp = env.value(t, dur);
-                (2.0 * PI * freq * t).sin() * tone_amp
+                Oscillator(2.0 * PI * freq * t).sin() * tone_amp
             } else {
                 0.0
             };
@@ -449,17 +431,13 @@ impl UnpitchedInstrument for SnareDrum {
 }
 
 pub struct HiHat {
-    pub amp_env: ParametricDecayEnvelope,
+    pub amp_env: ParametricEnvelope,
 }
 
 impl Default for HiHat {
     fn default() -> Self {
         Self {
-            amp_env: ParametricDecayEnvelope {
-                start: 1.0,
-                end: 0.0,
-                exponent: 8.0,
-            },
+            amp_env: ParametricEnvelope { start: 1.0, end: 0.0, exponent: 8.0 },
         }
     }
 }
