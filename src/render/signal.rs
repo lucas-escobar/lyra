@@ -6,40 +6,244 @@ use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
 
-use super::types::Float;
+use super::types::{Float, Hz, Seconds};
 
-type DutyCycle = Float;
-
-pub enum WaveShape {
-    Sine,
-    Saw,
-    Square,
-    Triangle,
-    Pulse(DutyCycle),
+pub enum SignalSource {
+    Oscillator(Oscillator),
+    Noise(Noise),
+    Sampler(Sampler),
     Silence,
 }
 
+impl SignalSource {
+    /// Noise and silence ignore t
+    pub fn sample(&self, t: Seconds) -> Float {
+        match self {
+            Self::Oscillator(osc) => osc.sample(t),
+            Self::Noise(n) => n.sample(),
+            Self::Sampler(s) => s.sample(t),
+            Self::Silence => 0.0,
+        }
+    }
+}
+
+// TODO Implement
+pub struct Sampler;
+
+mod wave {
+    use super::super::types::{DutyCycle, Float, SampleBuffer, Skew};
+    type Dimensions = usize;
+
+    pub struct Wavetable {
+        pub tables: Vec<SampleBuffer>,
+
+        /// Number of samples per waveform (assumes all are same length)
+        pub resolution: usize,
+        pub dimensions: usize,
+    }
+
+    pub struct WavetablePosition<const N: Dimensions> {
+        /// One coord per dimension
+        /// 1D: [x]
+        /// 2D: [x, y]
+        /// 3D: [x, y, x]
+        pub coords: [Float; N], // One per dimension, range [0.0, 1.0]
+    }
+
+    pub enum WaveShape {
+        Sine,
+        Triangle(Skew),
+        Saw(Skew),
+        Pulse(DutyCycle),
+    }
+
+    /// Linearly interpolates between `a` and `b` by the interpolation factor
+    /// `t`.
+    ///
+    /// - `t = 0.0` returns `a`
+    /// - `t = 1.0` returns `b`
+    /// - Values of `t` between 0.0 and 1.0 return a weighted average
+    ///
+    /// Useful for smooth transitions or blending between two values.
+    fn lerp(a: Float, b: Float, t: Float) -> Float {
+        a * (1.0 - t) + b * t
+    }
+
+    /// `phase`: in [0.0, 1.0), the position in the waveform
+    /// `position.coords`: in [0.0, 1.0]
+    pub fn interpolate_sample(
+        wavetable: &Wavetable,
+        position: &WavetablePosition<N>,
+        phase: Float,
+    ) -> Float {
+        let resolution = wavetable.resolution;
+        let sample_index = phase * (resolution as Float);
+        let i0 = sample_index.floor() as usize % resolution;
+        let i1 = (i0 + 1) % resolution;
+        let frac = sample_index.fract();
+
+        match wavetable.dimensions {
+            1 => {
+                // Linear morph between 2 tables
+                let t = position.coords[0].clamp(0.0, 1.0);
+                let max_idx = wavetable.tables.len() - 1;
+                let idx = (t * max_idx as Float).floor() as usize;
+                let next_idx = (idx + 1).min(max_idx);
+                let local_t = (t * max_idx as Float) - idx as Float;
+
+                let a = lerp(
+                    wavetable.tables[idx][i0],
+                    wavetable.tables[idx][i1],
+                    frac,
+                );
+                let b = lerp(
+                    wavetable.tables[next_idx][i0],
+                    wavetable.tables[next_idx][i1],
+                    frac,
+                );
+                lerp(a, b, local_t)
+            }
+
+            2 => {
+                // Bilinear morph between 4 tables
+                let x = position.coords[0].clamp(0.0, 1.0);
+                let y = position.coords[1].clamp(0.0, 1.0);
+                let grid_w = (wavetable.tables.len() as f64).sqrt() as usize;
+                let grid_h = grid_w;
+
+                let x_idx = (x * (grid_w - 1) as Float).floor() as usize;
+                let y_idx = (y * (grid_h - 1) as Float).floor() as usize;
+                let tx = x * (grid_w - 1) as Float - x_idx as Float;
+                let ty = y * (grid_h - 1) as Float - y_idx as Float;
+
+                let idx = |x: usize, y: usize| y * grid_w + x;
+
+                let a = lerp(
+                    wavetable.tables[idx(x_idx, y_idx)][i0],
+                    wavetable.tables[idx(x_idx, y_idx)][i1],
+                    frac,
+                );
+                let b = lerp(
+                    wavetable.tables[idx(x_idx + 1, y_idx)][i0],
+                    wavetable.tables[idx(x_idx + 1, y_idx)][i1],
+                    frac,
+                );
+                let c = lerp(
+                    wavetable.tables[idx(x_idx, y_idx + 1)][i0],
+                    wavetable.tables[idx(x_idx, y_idx + 1)][i1],
+                    frac,
+                );
+                let d = lerp(
+                    wavetable.tables[idx(x_idx + 1, y_idx + 1)][i0],
+                    wavetable.tables[idx(x_idx + 1, y_idx + 1)][i1],
+                    frac,
+                );
+
+                let top = lerp(a, b, tx);
+                let bottom = lerp(c, d, tx);
+                lerp(top, bottom, ty)
+            }
+
+            3 => {
+                // Trilinear morph between 8 tables
+                let x = position.coords[0].clamp(0.0, 1.0);
+                let y = position.coords[1].clamp(0.0, 1.0);
+                let z = position.coords[2].clamp(0.0, 1.0);
+
+                let grid_size = (wavetable.tables.len() as f64).cbrt() as usize;
+                let idx = |x: usize, y: usize, z: usize| {
+                    z * grid_size * grid_size + y * grid_size + x
+                };
+
+                let x0 = (x * (grid_size - 1) as Float).floor() as usize;
+                let y0 = (y * (grid_size - 1) as Float).floor() as usize;
+                let z0 = (z * (grid_size - 1) as Float).floor() as usize;
+                let tx = x * (grid_size - 1) as Float - x0 as Float;
+                let ty = y * (grid_size - 1) as Float - y0 as Float;
+                let tz = z * (grid_size - 1) as Float - z0 as Float;
+
+                let sample = |x, y, z| {
+                    let buf = &wavetable.tables[idx(x, y, z)];
+                    lerp(buf[i0], buf[i1], frac)
+                };
+
+                let c000 = sample(x0, y0, z0);
+                let c100 = sample(x0 + 1, y0, z0);
+                let c010 = sample(x0, y0 + 1, z0);
+                let c110 = sample(x0 + 1, y0 + 1, z0);
+                let c001 = sample(x0, y0, z0 + 1);
+                let c101 = sample(x0 + 1, y0, z0 + 1);
+                let c011 = sample(x0, y0 + 1, z0 + 1);
+                let c111 = sample(x0 + 1, y0 + 1, z0 + 1);
+
+                let c00 = lerp(c000, c100, tx);
+                let c10 = lerp(c010, c110, tx);
+                let c01 = lerp(c001, c101, tx);
+                let c11 = lerp(c011, c111, tx);
+
+                let c0 = lerp(c00, c10, ty);
+                let c1 = lerp(c01, c11, ty);
+
+                lerp(c0, c1, tz)
+            }
+
+            _ => panic!("Unsupported wavetable dimension"),
+        }
+    }
+}
+
 pub struct Oscillator {
-    pub wave: WaveShape,
+    pub table: Wavetable,
+    pub position: WavetablePosition,
+    pub freq: Hz,
+    pub phase: Float,
+}
+
+impl Default for Oscillator {
+    fn default() -> Self {
+        Self { wave: WaveShape::Sine, freq: 440.0 }
+    }
 }
 
 impl Oscillator {
     /// Return sample of waveform at specified frequency (f) and time (t)
-    pub fn sample(&self, f: Float, t: Float) -> Float {
+    pub fn sample(&self, t: Seconds) -> Float {
+        let f = self.freq;
         let phase = 2.0 * PI * f * t;
 
         match self.wave {
             WaveShape::Sine => phase.sin(),
-            WaveShape::Saw => 2.0 * (t * f - (t * f + 0.5).floor()),
-            WaveShape::Square => {
-                if phase.sin() >= 0.0 {
-                    1.0
+            WaveShape::Saw(skew) => {
+                if skew == 0.5 {
+                    // Classic symmetric sawtooth: rising from -1 to 1
+                    2.0 * (phase - 0.5)
+                } else if skew < 0.5 {
+                    let norm_phase = phase / (2.0 * skew);
+                    if phase < skew {
+                        2.0 * norm_phase - 1.0
+                    } else {
+                        1.0
+                    }
                 } else {
-                    -1.0
+                    let norm_phase = (phase - skew) / (1.0 - skew);
+                    if phase >= skew {
+                        -2.0 * norm_phase + 1.0
+                    } else {
+                        -1.0
+                    }
                 }
             }
-            WaveShape::Triangle => {
-                2.0 * (2.0 * (t * f - (t * f + 0.5).floor())).abs() - 1.0
+            WaveShape::Triangle(skew) => {
+                if skew == 0.5 {
+                    // Classic triangle
+                    4.0 * (phase - 0.5).abs() - 1.0
+                } else if phase < skew {
+                    // Rising segment
+                    (2.0 / skew) * phase - 1.0
+                } else {
+                    // Falling segment
+                    (-2.0 / (1.0 - skew)) * (phase - skew) + 1.0
+                }
             }
             WaveShape::Pulse(duty) => {
                 let phase_fraction = (f * t / (2.0 * PI)) % 1.0;
@@ -49,7 +253,6 @@ impl Oscillator {
                     -1.0
                 }
             }
-            WaveShape::Silence => 0.0,
         }
     }
 }
@@ -95,29 +298,66 @@ impl Noise {
     }
 }
 
-pub trait ModulationSource {
-    fn value_at(&self, t: Float) -> Float;
+pub enum ModulationSource {
+    Constant(Float),
+    Envelope(ParametricEnvelope),
+    LowFrequencyOscillator(Oscillator),
 }
 
-pub trait ModulationTarget {
-    fn apply(&mut self, value: Float);
+impl ModulationSource {
+    fn value_at(&self, t: Seconds) -> Float {
+        match self {
+            Self::Constant(v) => v,
+            Self::Envelope(e) => e.value(t),
+            Self::LowFrequencyOscillator(osc) => osc.sample(t),
+        }
+    }
 }
 
-pub struct Modulation<'a> {
-    pub source: &'a dyn ModulationSource,
-    pub target: &'a mut dyn ModulationTarget,
+pub enum ModulationTarget {
+    // Oscillator / note
+    Pitch,
+    Amplitude,
+    Velocity,
+    DutyCycle,
+    PhaseOffset,
+
+    // Effects
+    FilterCutoff,
+    FilterResonance,
+    DistortionDrive,
+    PanPosition,
+    ReverbMix,
+    DelayTime,
+    DelayFeedback,
+    ChorusDepth,
+    BitCrushAmount,
+
+    // Envelopes
+    AttackTime,
+    DecayTime,
+    SustainLevel,
+    ReleaseTime,
+
+    // Modulations
+    ModulationDepth,
+}
+
+pub struct ModulationRoute {
+    pub source: ModulationSource,
+    pub target: ModulationTarget,
     pub depth: Float, // -1.0..1.0
 }
 
-pub struct ModMatrix<'a> {
-    pub routes: Vec<Modulation<'a>>,
+pub struct ModulationMatrix {
+    pub routes: Vec<ModulationRoute>,
 }
 
-impl<'a> ModMatrix<'a> {
+impl ModulationMatrix {
     pub fn apply(&mut self, t: Float) {
         for r in &mut self.routes {
             let val = r.source.sample(t) * r.depth;
-            r.target.apply_modulation(val);
+            r.target.apply(val);
         }
     }
 }
@@ -147,7 +387,8 @@ enum StageKind {
 #[derive(Debug, Clone)]
 pub struct ParametricEnvelope {
     pub stages: Vec<EnvelopeStage>,
-    pub loop_point: Option<usize>, // optional: loop stage N to end until note off
+    pub loop_point: Option<usize>, /* optional: loop stage N to end until
+                                    * note off */
     pub sustain_point: Option<usize>, // optional: hold here until note off
     pub release_stages: Vec<EnvelopeStage>,
     pub gate_on_time: Option<Float>,

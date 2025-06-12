@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use super::envelope::{Envelope, ADSR};
 use super::processor::RenderContext;
-use super::signal::{Oscillator, ParametricEnvelope};
+use super::signal::{Oscillator, ParametricEnvelope, SignalSource};
 use super::types::{Float, Seconds};
 use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
+use crate::render::ModulationMatrix;
 
 pub trait Instrument: 'static {
     /// Render a MusicXML part into a sample buffer. This is the main interface
@@ -38,7 +39,29 @@ impl AnyInstrument {
     }
 }
 
-pub trait PitchedInstrument {
+/// The sound an instrument generates depends on the composition of layers. Each
+/// layer is mixed with the ones below it.
+pub struct InstrumentLayer {
+    pub signal: SignalSource,
+
+    /// Layer-local modulations
+    pub mods: Option<ModulationMatrix>,
+
+    /// Layer-local effects
+    pub fx: Option<EffectChain>,
+}
+
+pub struct Instrument {
+    pub layers: Vec<InstrumentLayer>,
+
+    /// Global level modulations apply to all instrument layers
+    pub mods: Option<ModulationMatrix>,
+
+    /// Global level effects apply to all instrument layers
+    pub fx: Option<EffectChain>,
+}
+
+impl Instrument {
     fn process_note_events(
         &self,
         ctx: &RenderContext,
