@@ -5,7 +5,6 @@ use super::types::{Float, Seconds};
 
 mod signal {
     use std::cell::RefCell;
-    use std::f64::consts::PI;
 
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -52,51 +51,7 @@ mod signal {
         /// Return sample of waveform at specified frequency (f) and time (t)
         pub fn sample(&self, t: Seconds) -> Float {
             let f = self.freq;
-            let phase = 2.0 * PI * f * t;
-
-            match self.wave {
-                WaveShape::Sine => phase.sin(),
-                WaveShape::Saw(skew) => {
-                    if skew == 0.5 {
-                        // Classic symmetric sawtooth: rising from -1 to 1
-                        2.0 * (phase - 0.5)
-                    } else if skew < 0.5 {
-                        let norm_phase = phase / (2.0 * skew);
-                        if phase < skew {
-                            2.0 * norm_phase - 1.0
-                        } else {
-                            1.0
-                        }
-                    } else {
-                        let norm_phase = (phase - skew) / (1.0 - skew);
-                        if phase >= skew {
-                            -2.0 * norm_phase + 1.0
-                        } else {
-                            -1.0
-                        }
-                    }
-                }
-                WaveShape::Triangle(skew) => {
-                    if skew == 0.5 {
-                        // Classic triangle
-                        4.0 * (phase - 0.5).abs() - 1.0
-                    } else if phase < skew {
-                        // Rising segment
-                        (2.0 / skew) * phase - 1.0
-                    } else {
-                        // Falling segment
-                        (-2.0 / (1.0 - skew)) * (phase - skew) + 1.0
-                    }
-                }
-                WaveShape::Pulse(duty) => {
-                    let phase_fraction = (f * t / (2.0 * PI)) % 1.0;
-                    if phase_fraction < duty {
-                        1.0
-                    } else {
-                        -1.0
-                    }
-                }
-            }
+            self.wave.sample(self.freq, t)
         }
     }
 
@@ -143,7 +98,12 @@ mod signal {
 }
 
 mod wave {
-    use super::super::types::{DutyCycle, Float, SampleBuffer, Skew};
+    use std::f64::consts::PI;
+
+    use super::super::types::{
+        DutyCycle, Float, Hz, SampleBuffer, Seconds, Skew,
+    };
+
     type Dimensions = usize;
 
     pub struct Wavetable {
@@ -157,7 +117,7 @@ mod wave {
     }
 
     impl Wavetable {
-        pub fn sample(&self, 
+        pub fn sample(&self) -> Float {}
     }
 
     pub struct WavetablePosition<const N: Dimensions> {
@@ -168,11 +128,73 @@ mod wave {
         pub coords: [Float; N],
     }
 
+    pub struct Wave {
+        pub kind: WaveShape,
+        pub symmetry: Float,
+        pub clip: Option<Float>,
+        pub fold: Option<Float>,
+        pub drive: Option<Float>,
+        pub wrap: Option<Float>,
+        pub bitcrush: Option<u32>,
+        pub phase_distortion: Option<Float>,
+        pub phase_offset: Option<Float>,
+        pub waveshaper: Option<Box<dyn Fn(Float) -> Float>>,
+    }
+
     pub enum WaveShape {
         Sine,
         Triangle(Skew),
         Saw(Skew),
         Pulse(DutyCycle),
+    }
+
+    impl WaveShape {
+        pub fn sample(&self, frequency: Hz, t: Seconds) -> Float {
+            let phase = 2.0 * PI * frequency * t;
+            match self {
+                WaveShape::Sine => phase.sin(),
+                WaveShape::Saw(skew) => {
+                    if skew == 0.5 {
+                        // Classic symmetric sawtooth: rising from -1 to 1
+                        2.0 * (phase - 0.5)
+                    } else if skew < &0.5 {
+                        let norm_phase = phase / (2.0 * skew);
+                        if phase < skew {
+                            2.0 * norm_phase - 1.0
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        let norm_phase = (phase - skew) / (1.0 - skew);
+                        if phase >= skew {
+                            -2.0 * norm_phase + 1.0
+                        } else {
+                            -1.0
+                        }
+                    }
+                }
+                WaveShape::Triangle(skew) => {
+                    if skew == 0.5 {
+                        // Classic triangle
+                        4.0 * (phase - 0.5).abs() - 1.0
+                    } else if phase < skew {
+                        // Rising segment
+                        (2.0 / skew) * phase - 1.0
+                    } else {
+                        // Falling segment
+                        (-2.0 / (1.0 - skew)) * (phase - skew) + 1.0
+                    }
+                }
+                WaveShape::Pulse(duty) => {
+                    let phase_fraction = (f * t / (2.0 * PI)) % 1.0;
+                    if phase_fraction < duty {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                }
+            }
+        }
     }
 
     /// Linearly interpolates between `a` and `b` by the interpolation factor
