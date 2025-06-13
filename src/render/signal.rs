@@ -1,34 +1,146 @@
 /// Tools for generating and modulating signals
-use std::cell::RefCell;
-use std::f64::consts::PI;
-
-use rand::rngs::StdRng;
 use rand::Rng;
-use rand::SeedableRng;
 
-use super::types::{Float, Hz, Seconds};
+use super::types::{Float, Seconds};
 
-pub enum SignalSource {
-    Oscillator(Oscillator),
-    Noise(Noise),
-    Sampler(Sampler),
-    Silence,
-}
+mod signal {
+    use std::cell::RefCell;
+    use std::f64::consts::PI;
 
-impl SignalSource {
-    /// Noise and silence ignore t
-    pub fn sample(&self, t: Seconds) -> Float {
-        match self {
-            Self::Oscillator(osc) => osc.sample(t),
-            Self::Noise(n) => n.sample(),
-            Self::Sampler(s) => s.sample(t),
-            Self::Silence => 0.0,
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    use super::super::types::{Float, Hz, Seconds};
+    use super::wave;
+
+    pub enum SignalSource {
+        Oscillator(Oscillator),
+        Noise(Noise),
+        Sampler(Sampler),
+        Silence,
+    }
+
+    impl SignalSource {
+        /// Noise and silence ignore t
+        pub fn sample(&self, t: Seconds) -> Float {
+            match self {
+                Self::Oscillator(osc) => osc.sample(t),
+                Self::Noise(n) => n.sample(),
+                Self::Sampler(s) => s.sample(t),
+                Self::Silence => 0.0,
+            }
+        }
+    }
+
+    // TODO Implement
+    pub struct Sampler;
+
+    pub struct Oscillator {
+        pub table: wave::Wavetable,
+        pub position: wave::WavetablePosition,
+        pub freq: Hz,
+        pub phase: Float,
+    }
+
+    impl Default for Oscillator {
+        fn default() -> Self {
+            Self { wave: wave::WaveShape::Sine, freq: 440.0 }
+        }
+    }
+
+    impl Oscillator {
+        /// Return sample of waveform at specified frequency (f) and time (t)
+        pub fn sample(&self, t: Seconds) -> Float {
+            let f = self.freq;
+            let phase = 2.0 * PI * f * t;
+
+            match self.wave {
+                WaveShape::Sine => phase.sin(),
+                WaveShape::Saw(skew) => {
+                    if skew == 0.5 {
+                        // Classic symmetric sawtooth: rising from -1 to 1
+                        2.0 * (phase - 0.5)
+                    } else if skew < 0.5 {
+                        let norm_phase = phase / (2.0 * skew);
+                        if phase < skew {
+                            2.0 * norm_phase - 1.0
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        let norm_phase = (phase - skew) / (1.0 - skew);
+                        if phase >= skew {
+                            -2.0 * norm_phase + 1.0
+                        } else {
+                            -1.0
+                        }
+                    }
+                }
+                WaveShape::Triangle(skew) => {
+                    if skew == 0.5 {
+                        // Classic triangle
+                        4.0 * (phase - 0.5).abs() - 1.0
+                    } else if phase < skew {
+                        // Rising segment
+                        (2.0 / skew) * phase - 1.0
+                    } else {
+                        // Falling segment
+                        (-2.0 / (1.0 - skew)) * (phase - skew) + 1.0
+                    }
+                }
+                WaveShape::Pulse(duty) => {
+                    let phase_fraction = (f * t / (2.0 * PI)) % 1.0;
+                    if phase_fraction < duty {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                }
+            }
+        }
+    }
+
+    pub struct Noise {
+        pub kind: NoiseType,
+        pub rng: RefCell<StdRng>,
+
+        // TODO used for brown noise. refactor probably needed
+        pub last_sample: RefCell<Float>,
+    }
+
+    pub enum NoiseType {
+        White,
+        Brown,
+        // TODO add more noise types
+    }
+
+    impl Noise {
+        pub fn new(kind: NoiseType, seed: u64) -> Self {
+            Self {
+                kind,
+                rng: RefCell::new(StdRng::seed_from_u64(seed)),
+                last_sample: RefCell::new(0.0),
+            }
+        }
+    }
+
+    impl Noise {
+        pub fn sample(&self) -> Float {
+            let mut rng = self.rng.borrow_mut();
+
+            match self.kind {
+                NoiseType::White => rng.gen_range(-1.0..1.0),
+                NoiseType::Brown => {
+                    let mut last = self.last_sample.borrow_mut();
+                    let next =
+                        (*last + rng.gen_range(-0.02..0.02)).clamp(-1.0, 1.0);
+                    *last = next;
+                    next
+                }
+            }
         }
     }
 }
-
-// TODO Implement
-pub struct Sampler;
 
 mod wave {
     use super::super::types::{DutyCycle, Float, SampleBuffer, Skew};
@@ -37,17 +149,23 @@ mod wave {
     pub struct Wavetable {
         pub tables: Vec<SampleBuffer>,
 
-        /// Number of samples per waveform (assumes all are same length)
-        pub resolution: usize,
+        pub samples_per_table: usize,
+
+        /// Number of waves per dimension
+        pub grid_resolution: usize,
         pub dimensions: usize,
     }
 
+    impl Wavetable {
+        pub fn sample(&self, 
+    }
+
     pub struct WavetablePosition<const N: Dimensions> {
-        /// One coord per dimension
+        /// One coord per dimension (0.0 .. 1.0)
         /// 1D: [x]
         /// 2D: [x, y]
         /// 3D: [x, y, x]
-        pub coords: [Float; N], // One per dimension, range [0.0, 1.0]
+        pub coords: [Float; N],
     }
 
     pub enum WaveShape {
@@ -188,112 +306,6 @@ mod wave {
             }
 
             _ => panic!("Unsupported wavetable dimension"),
-        }
-    }
-}
-
-pub struct Oscillator {
-    pub table: Wavetable,
-    pub position: WavetablePosition,
-    pub freq: Hz,
-    pub phase: Float,
-}
-
-impl Default for Oscillator {
-    fn default() -> Self {
-        Self { wave: WaveShape::Sine, freq: 440.0 }
-    }
-}
-
-impl Oscillator {
-    /// Return sample of waveform at specified frequency (f) and time (t)
-    pub fn sample(&self, t: Seconds) -> Float {
-        let f = self.freq;
-        let phase = 2.0 * PI * f * t;
-
-        match self.wave {
-            WaveShape::Sine => phase.sin(),
-            WaveShape::Saw(skew) => {
-                if skew == 0.5 {
-                    // Classic symmetric sawtooth: rising from -1 to 1
-                    2.0 * (phase - 0.5)
-                } else if skew < 0.5 {
-                    let norm_phase = phase / (2.0 * skew);
-                    if phase < skew {
-                        2.0 * norm_phase - 1.0
-                    } else {
-                        1.0
-                    }
-                } else {
-                    let norm_phase = (phase - skew) / (1.0 - skew);
-                    if phase >= skew {
-                        -2.0 * norm_phase + 1.0
-                    } else {
-                        -1.0
-                    }
-                }
-            }
-            WaveShape::Triangle(skew) => {
-                if skew == 0.5 {
-                    // Classic triangle
-                    4.0 * (phase - 0.5).abs() - 1.0
-                } else if phase < skew {
-                    // Rising segment
-                    (2.0 / skew) * phase - 1.0
-                } else {
-                    // Falling segment
-                    (-2.0 / (1.0 - skew)) * (phase - skew) + 1.0
-                }
-            }
-            WaveShape::Pulse(duty) => {
-                let phase_fraction = (f * t / (2.0 * PI)) % 1.0;
-                if phase_fraction < duty {
-                    1.0
-                } else {
-                    -1.0
-                }
-            }
-        }
-    }
-}
-
-pub struct Noise {
-    pub kind: NoiseType,
-    pub rng: RefCell<StdRng>,
-
-    // TODO used for brown noise. refactor probably needed
-    pub last_sample: RefCell<Float>,
-}
-
-pub enum NoiseType {
-    White,
-    Brown,
-    // TODO add more noise types
-}
-
-impl Noise {
-    pub fn new(kind: NoiseType, seed: u64) -> Self {
-        Self {
-            kind,
-            rng: RefCell::new(StdRng::seed_from_u64(seed)),
-            last_sample: RefCell::new(0.0),
-        }
-    }
-}
-
-impl Noise {
-    pub fn sample(&self) -> Float {
-        let mut rng = self.rng.borrow_mut();
-
-        match self.kind {
-            NoiseType::White => rng.gen_range(-1.0..1.0),
-            NoiseType::Brown => {
-                let mut last = self.last_sample.borrow_mut();
-                let next =
-                    (*last + rng.gen_range(-0.02..0.02)).clamp(-1.0, 1.0);
-                *last = next;
-                next
-            }
         }
     }
 }
