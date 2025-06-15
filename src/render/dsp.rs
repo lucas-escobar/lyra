@@ -3,7 +3,7 @@ use rand::Rng;
 
 use super::types::{Float, Seconds};
 
-mod signal {
+pub mod signal {
     use std::cell::RefCell;
 
     use rand::rngs::StdRng;
@@ -35,15 +35,14 @@ mod signal {
     pub struct Sampler;
 
     pub struct Oscillator {
-        pub table: wave::Wavetable,
-        pub position: wave::WavetablePosition,
+        pub wave: wave::Wave,
         pub freq: Hz,
         pub phase: Float,
     }
 
     impl Default for Oscillator {
         fn default() -> Self {
-            Self { wave: wave::WaveShape::Sine, freq: 440.0 }
+            Self { wave: wave::Wave::default(), freq: 440.0, phase: 0.0 }
         }
     }
 
@@ -97,48 +96,67 @@ mod signal {
     }
 }
 
-mod wave {
+pub mod wave {
     use std::f64::consts::PI;
 
     use super::super::types::{
         DutyCycle, Float, Hz, SampleBuffer, Seconds, Skew,
     };
 
-    type Dimensions = usize;
-
-    pub struct Wavetable {
-        pub tables: Vec<SampleBuffer>,
-
-        pub samples_per_table: usize,
-
-        /// Number of waves per dimension
-        pub grid_resolution: usize,
-        pub dimensions: usize,
-    }
-
-    impl Wavetable {
-        pub fn sample(&self) -> Float {}
-    }
-
-    pub struct WavetablePosition<const N: Dimensions> {
-        /// One coord per dimension (0.0 .. 1.0)
-        /// 1D: [x]
-        /// 2D: [x, y]
-        /// 3D: [x, y, x]
-        pub coords: [Float; N],
-    }
-
     pub struct Wave {
-        pub kind: WaveShape,
-        pub symmetry: Float,
-        pub clip: Option<Float>,
-        pub fold: Option<Float>,
-        pub drive: Option<Float>,
-        pub wrap: Option<Float>,
-        pub bitcrush: Option<u32>,
-        pub phase_distortion: Option<Float>,
-        pub phase_offset: Option<Float>,
-        pub waveshaper: Option<Box<dyn Fn(Float) -> Float>>,
+        pub source: Box<dyn WaveSource>,
+        pub modifiers: Vec<Box<dyn WaveModifier>>,
+    }
+
+    impl Default for Wave {
+        fn default() -> Self {
+            Self { source: Box::new(WaveShape::Sine), modifiers: vec![] }
+        }
+    }
+
+    impl Wave {
+        pub fn sample(&self, frequency: Hz, t: Seconds) -> Float {
+            let mut sample = self.source.sample(frequency, t);
+            for modifier in &self.modifiers {
+                sample = modifier.apply(sample);
+            }
+            sample
+        }
+    }
+
+    pub trait WaveSource {
+        fn sample(&self, frequency: Hz, t: Seconds) -> Float;
+    }
+
+    pub trait WaveModifier {
+        fn apply(&self, sample: Float) -> Float;
+    }
+
+    pub struct Wavetable1D {
+        waves: Vec<Box<dyn WaveSource>>,
+        position: Float,
+    }
+
+    impl WaveSource for Wavetable1D {
+        fn sample(&self, frequency: Hz, t: Seconds) -> Float {
+            let n = self.waves.len();
+            if n == 0 {
+                return 0.0;
+            }
+
+            let pos = self.position.clamp(0.0, 1.0);
+            let idx = pos * (n - 1) as Float;
+            let i = idx.floor() as usize;
+            let frac = idx - i as Float;
+
+            if i >= n - 1 {
+                return self.waves[n - 1].sample(frequency, t);
+            }
+
+            let a = self.waves[i].sample(frequency, t);
+            let b = self.waves[i + 1].sample(frequency, t);
+            a * (1.0 - frac) + b * frac
+        }
     }
 
     pub enum WaveShape {
@@ -148,12 +166,12 @@ mod wave {
         Pulse(DutyCycle),
     }
 
-    impl WaveShape {
-        pub fn sample(&self, frequency: Hz, t: Seconds) -> Float {
+    impl WaveSource for WaveShape {
+        fn sample(&self, frequency: Hz, t: Seconds) -> Float {
             let phase = 2.0 * PI * frequency * t;
             match self {
-                WaveShape::Sine => phase.sin(),
-                WaveShape::Saw(skew) => {
+                Self::Sine => phase.sin(),
+                Self::Saw(skew) => {
                     if skew == 0.5 {
                         // Classic symmetric sawtooth: rising from -1 to 1
                         2.0 * (phase - 0.5)
@@ -173,7 +191,7 @@ mod wave {
                         }
                     }
                 }
-                WaveShape::Triangle(skew) => {
+                Self::Triangle(skew) => {
                     if skew == 0.5 {
                         // Classic triangle
                         4.0 * (phase - 0.5).abs() - 1.0
@@ -185,13 +203,69 @@ mod wave {
                         (-2.0 / (1.0 - skew)) * (phase - skew) + 1.0
                     }
                 }
-                WaveShape::Pulse(duty) => {
-                    let phase_fraction = (f * t / (2.0 * PI)) % 1.0;
+                Self::Pulse(duty) => {
+                    let phase_fraction = (frequency * t / (2.0 * PI)) % 1.0;
                     if phase_fraction < duty {
                         1.0
                     } else {
                         -1.0
                     }
+                }
+            }
+        }
+    }
+
+    pub struct Drive(pub Float);
+    impl WaveModifier for Drive {
+        fn apply(&self, x: Float) -> Float {
+            (x * self.0).tanh()
+        }
+    }
+
+    pub enum ClipMode {
+        Hard,
+        Soft,
+    }
+
+    pub struct Clip {
+        pub threshold: Float,
+        pub mode: ClipMode,
+    }
+
+    impl WaveModifier for Clip {
+        fn apply(&self, x: Float) -> Float {
+            match self.mode {
+                ClipMode::Hard => x.clamp(-self.threshold, self.threshold),
+                ClipMode::Soft => {
+                    let x_norm = x / self.threshold;
+                    self.threshold * x_norm.tanh()
+                }
+            }
+        }
+    }
+
+    pub struct Fold {
+        pub threshold: Float,
+        pub mode: ClipMode,
+    }
+
+    impl WaveModifier for Fold {
+        fn apply(&self, x: Float) -> Float {
+            match self.mode {
+                ClipMode::Hard => {
+                    let t = self.threshold.abs();
+                    if x > t {
+                        t - (x - t)
+                    } else if x < -t {
+                        -t - (x + t)
+                    } else {
+                        x
+                    }
+                }
+                ClipMode::Soft => {
+                    // soft folding using sine-based wrapping for a smooth curve
+                    let t = self.threshold.abs();
+                    (t / PI) * (x / t * PI).sin()
                 }
             }
         }
@@ -208,134 +282,12 @@ mod wave {
     fn lerp(a: Float, b: Float, t: Float) -> Float {
         a * (1.0 - t) + b * t
     }
-
-    /// `phase`: in [0.0, 1.0), the position in the waveform
-    /// `position.coords`: in [0.0, 1.0]
-    pub fn interpolate_sample(
-        wavetable: &Wavetable,
-        position: &WavetablePosition<N>,
-        phase: Float,
-    ) -> Float {
-        let resolution = wavetable.resolution;
-        let sample_index = phase * (resolution as Float);
-        let i0 = sample_index.floor() as usize % resolution;
-        let i1 = (i0 + 1) % resolution;
-        let frac = sample_index.fract();
-
-        match wavetable.dimensions {
-            1 => {
-                // Linear morph between 2 tables
-                let t = position.coords[0].clamp(0.0, 1.0);
-                let max_idx = wavetable.tables.len() - 1;
-                let idx = (t * max_idx as Float).floor() as usize;
-                let next_idx = (idx + 1).min(max_idx);
-                let local_t = (t * max_idx as Float) - idx as Float;
-
-                let a = lerp(
-                    wavetable.tables[idx][i0],
-                    wavetable.tables[idx][i1],
-                    frac,
-                );
-                let b = lerp(
-                    wavetable.tables[next_idx][i0],
-                    wavetable.tables[next_idx][i1],
-                    frac,
-                );
-                lerp(a, b, local_t)
-            }
-
-            2 => {
-                // Bilinear morph between 4 tables
-                let x = position.coords[0].clamp(0.0, 1.0);
-                let y = position.coords[1].clamp(0.0, 1.0);
-                let grid_w = (wavetable.tables.len() as f64).sqrt() as usize;
-                let grid_h = grid_w;
-
-                let x_idx = (x * (grid_w - 1) as Float).floor() as usize;
-                let y_idx = (y * (grid_h - 1) as Float).floor() as usize;
-                let tx = x * (grid_w - 1) as Float - x_idx as Float;
-                let ty = y * (grid_h - 1) as Float - y_idx as Float;
-
-                let idx = |x: usize, y: usize| y * grid_w + x;
-
-                let a = lerp(
-                    wavetable.tables[idx(x_idx, y_idx)][i0],
-                    wavetable.tables[idx(x_idx, y_idx)][i1],
-                    frac,
-                );
-                let b = lerp(
-                    wavetable.tables[idx(x_idx + 1, y_idx)][i0],
-                    wavetable.tables[idx(x_idx + 1, y_idx)][i1],
-                    frac,
-                );
-                let c = lerp(
-                    wavetable.tables[idx(x_idx, y_idx + 1)][i0],
-                    wavetable.tables[idx(x_idx, y_idx + 1)][i1],
-                    frac,
-                );
-                let d = lerp(
-                    wavetable.tables[idx(x_idx + 1, y_idx + 1)][i0],
-                    wavetable.tables[idx(x_idx + 1, y_idx + 1)][i1],
-                    frac,
-                );
-
-                let top = lerp(a, b, tx);
-                let bottom = lerp(c, d, tx);
-                lerp(top, bottom, ty)
-            }
-
-            3 => {
-                // Trilinear morph between 8 tables
-                let x = position.coords[0].clamp(0.0, 1.0);
-                let y = position.coords[1].clamp(0.0, 1.0);
-                let z = position.coords[2].clamp(0.0, 1.0);
-
-                let grid_size = (wavetable.tables.len() as f64).cbrt() as usize;
-                let idx = |x: usize, y: usize, z: usize| {
-                    z * grid_size * grid_size + y * grid_size + x
-                };
-
-                let x0 = (x * (grid_size - 1) as Float).floor() as usize;
-                let y0 = (y * (grid_size - 1) as Float).floor() as usize;
-                let z0 = (z * (grid_size - 1) as Float).floor() as usize;
-                let tx = x * (grid_size - 1) as Float - x0 as Float;
-                let ty = y * (grid_size - 1) as Float - y0 as Float;
-                let tz = z * (grid_size - 1) as Float - z0 as Float;
-
-                let sample = |x, y, z| {
-                    let buf = &wavetable.tables[idx(x, y, z)];
-                    lerp(buf[i0], buf[i1], frac)
-                };
-
-                let c000 = sample(x0, y0, z0);
-                let c100 = sample(x0 + 1, y0, z0);
-                let c010 = sample(x0, y0 + 1, z0);
-                let c110 = sample(x0 + 1, y0 + 1, z0);
-                let c001 = sample(x0, y0, z0 + 1);
-                let c101 = sample(x0 + 1, y0, z0 + 1);
-                let c011 = sample(x0, y0 + 1, z0 + 1);
-                let c111 = sample(x0 + 1, y0 + 1, z0 + 1);
-
-                let c00 = lerp(c000, c100, tx);
-                let c10 = lerp(c010, c110, tx);
-                let c01 = lerp(c001, c101, tx);
-                let c11 = lerp(c011, c111, tx);
-
-                let c0 = lerp(c00, c10, ty);
-                let c1 = lerp(c01, c11, ty);
-
-                lerp(c0, c1, tz)
-            }
-
-            _ => panic!("Unsupported wavetable dimension"),
-        }
-    }
 }
 
 pub enum ModulationSource {
     Constant(Float),
     Envelope(ParametricEnvelope),
-    LowFrequencyOscillator(Oscillator),
+    LowFrequencyOscillator(signal::Oscillator),
 }
 
 impl ModulationSource {
@@ -348,6 +300,7 @@ impl ModulationSource {
     }
 }
 
+// Assumes all modulation targets are represented by Float value
 pub enum ModulationTarget {
     // Oscillator / note
     Pitch,
@@ -377,10 +330,22 @@ pub enum ModulationTarget {
     ModulationDepth,
 }
 
+impl ModulationTarget {
+    pub fn apply(&self, base: Float, mod_val: Float) -> Float {
+        match self {
+            Self::Pitch => base + mod_val,
+            Self::Amplitude => (base * (1.0 + mod_val)).clamp(0.0, 1.0),
+            Self::Velocity => (base * (1.0 + mod_val)).clamp(0.0, 1.0),
+            Self::FilterCutoff => (base + mod_val).max(20.0), /* avoid sub-audio */
+            _ => panic!("Modulation target not implemented"),
+        }
+    }
+}
+
 pub struct ModulationRoute {
     pub source: ModulationSource,
     pub target: ModulationTarget,
-    pub depth: Float, // -1.0..1.0
+    pub depth: Float, // 0.0..1.0
 }
 
 pub struct ModulationMatrix {
@@ -388,10 +353,40 @@ pub struct ModulationMatrix {
 }
 
 impl ModulationMatrix {
-    pub fn apply(&mut self, t: Float) {
-        for r in &mut self.routes {
-            let val = r.source.sample(t) * r.depth;
-            r.target.apply(val);
+    /// Apply modulation matrix to a value and return the modulated value
+    pub fn apply(
+        &self,
+        target: ModulationTarget,
+        base: Float,
+        t: Seconds,
+    ) -> Float {
+        let mut combined = base;
+
+        for route in &self.routes {
+            if route.target == target {
+                let mod_val = route.source.value_at(t) * route.depth;
+                combined = target.apply(combined, mod_val);
+            }
+        }
+
+        combined
+    }
+
+    /// Turns all envelope gates in the matrix on
+    pub fn gate_on(&mut self, t: Seconds) {
+        for route in &mut self.routes {
+            if let ModulationSource::Envelope(ref mut env) = route.source {
+                env.gate_on(t);
+            }
+        }
+    }
+
+    /// Turns all envelope gates in the matrix off
+    pub fn gate_off(&mut self, t: Seconds) {
+        for route in &mut self.routes {
+            if let ModulationSource::Envelope(ref mut env) = route.source {
+                env.gate_off(t);
+            }
         }
     }
 }
@@ -445,12 +440,16 @@ impl ParametricEnvelope {
     }
 
     pub fn gate_on(&mut self, time: Float) {
-        self.gate_on_time = Some(time);
-        self.gate_off_time = None;
+        if self.gate_on_time == None {
+            self.gate_on_time = Some(time);
+            self.gate_off_time = None;
+        }
     }
 
     pub fn gate_off(&mut self, time: Float) {
-        self.gate_off_time = Some(time);
+        if self.gate_off_time == None {
+            self.gate_off_time = Some(time);
+        }
     }
 
     pub fn value(&self, now: Float) -> Float {

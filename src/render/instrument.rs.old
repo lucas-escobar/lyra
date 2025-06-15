@@ -2,13 +2,42 @@
 // of Part
 use std::collections::HashMap;
 
-use super::dsp::signal::{Oscillator, SignalSource};
-use super::effect::EffectChain;
 use super::envelope::{Envelope, ADSR};
 use super::processor::RenderContext;
+use super::signal::{Oscillator, ParametricEnvelope, SignalSource};
 use super::types::{Float, Seconds};
 use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
 use crate::render::ModulationMatrix;
+
+pub trait Instrument: 'static {
+    /// Render a MusicXML part into a sample buffer. This is the main interface
+    /// between the compose layer and render layer.
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float>;
+}
+
+pub enum AnyInstrument {
+    Pitched(Box<dyn PitchedInstrument>),
+    Unpitched(Box<dyn UnpitchedInstrument>),
+}
+
+impl Instrument for AnyInstrument {
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        match self {
+            AnyInstrument::Pitched(inst) => inst.render_part(part, ctx),
+            AnyInstrument::Unpitched(inst) => inst.render_part(part, ctx),
+        }
+    }
+}
+
+impl AnyInstrument {
+    pub fn pitched<T: PitchedInstrument + 'static>(inst: T) -> Self {
+        AnyInstrument::Pitched(Box::new(inst))
+    }
+
+    pub fn unpitched<T: UnpitchedInstrument + 'static>(inst: T) -> Self {
+        AnyInstrument::Unpitched(Box::new(inst))
+    }
+}
 
 /// The sound an instrument generates depends on the composition of layers. Each
 /// layer is mixed with the ones below it.
@@ -33,143 +62,46 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    fn max_release_time(&self) -> Float {
-        self.layers
-            .iter()
-            .flat_map(|l| l.mods.as_ref())
-            .flat_map(|m| m.routes.iter())
-            .filter_map(|r| match &r.source {
-                ModulationSource::Envelope(env) => Some(env.release_time()),
-                _ => None,
-            })
-            .fold(0.0, |a, b| a.max(b))
-    }
-
     fn process_note_events(
         &self,
         ctx: &RenderContext,
         note_events: Vec<NoteEvent>,
     ) -> Vec<Float> {
+        let buf: Vec<Float> = !vec![];
         let sr = ctx.sample_rate;
 
-        // TODO calculate exact total length required
-        let total_length_in_samples = 60 * sr;
-        let mut final_buffer = vec![0.0; total_length_in_samples];
+        for e in &note_events {
+            let dur = (e.end - e.start) + self.envelope.release_duration();
+            let n_event_samples: usize = dur * sr;
+            let start_sample: usize = e.start * sr;
 
-        for event in note_events {
-            let dur = (event.end - event.start) + self.max_release_time();
-            let n_samples = (dur * sr as Float).round() as usize;
-            let start_sample = (event.start * sr as Float).round() as usize;
-
-            // Each layer contributes to the note
-            for layer in &self.layers {
-                let mut layer_buffer = vec![0.0; n_samples];
-
-                // Gate ON
-                if let Some(mods) = &mut layer.mods {
-                    mods.gate_on(event.start);
-                }
-
-                for i in 0..n_samples {
-                    let t = i as Float / sr as Float;
-
-                    // Gate OFF at note end
-                    if t >= (event.end - event.start) {
-                        if let Some(mods) = &mut layer.mods {
-                            mods.gate_off(event.start + t);
-                        }
-                    }
-
-                    // Get modulated pitch/amplitude
-                    let pitch = layer
-                        .mods
-                        .as_ref()
-                        .map(|m| {
-                            m.apply(ModulationTarget::Pitch, event.pitch, t)
-                        })
-                        .unwrap_or(event.pitch);
-
-                    let amp = layer
-                        .mods
-                        .as_ref()
-                        .map(|m| {
-                            m.apply(
-                                ModulationTarget::Amplitude,
-                                event.velocity,
-                                t,
-                            )
-                        })
-                        .unwrap_or(event.velocity);
-
-                    let sample = layer.signal.sample(pitch, t) * amp;
-                    layer_buffer[i] = sample;
-                }
-
-                // Apply layer effects
-                if let Some(fx) = &mut layer.fx {
-                    fx.process(AudioBuffer::Mono(layer_buffer.clone()), sr);
-                }
-
-                // Mix into final buffer
-                for (i, sample) in layer_buffer.iter().enumerate() {
-                    let idx = start_sample + i;
-                    if idx < final_buffer.len() {
-                        final_buffer[idx] += sample;
-                    }
-                }
+            for i in 0..n_event_samples {
+                let t: Float = i / sr;
             }
         }
 
-        // Apply global FX if present
-        if let Some(global_fx) = &mut self.fx {
-            global_fx.process(AudioBuffer::Mono(final_buffer.clone()), sr);
-        }
+        //let full_duration_secs =
+        //    voice.duration_secs + self.envelope.release_time();
+        //let start_sample =
+        //    (voice.start_time_secs * ctx.sample_rate as Float).round() as
+        // usize; let num_samples =
+        //    (full_duration_secs * ctx.sample_rate as Float).round() as usize;
 
-        final_buffer
+        //for i in 0..num_samples {
+        //    let t = i as Float / ctx.sample_rate as Float;
+        //    let amp = self.envelope.value(t, voice.duration_secs);
+        //    let sample =
+        //        self.oscillator.sample(voice.freq, t) * amp * voice.velocity;
+        //    let idx = start_sample + i;
+
+        //    if idx < buffer_len {
+        //        mix_buffer[idx] += sample;
+        //        loudness_sum[idx] += amp * voice.velocity;
+        //    }
+        //}
+
+        buf
     }
-
-    //fn process_note_events(
-    //    &self,
-    //    ctx: &RenderContext,
-    //    note_events: Vec<NoteEvent>,
-    //) -> Vec<Float> {
-    //    let buf: Vec<Float> = !vec![];
-    //    let sr = ctx.sample_rate;
-
-    //    for e in &note_events {
-    //        // trigger envelope gate on
-    //        let dur = (e.end - e.start) + self.envelope.release_duration();
-    //        let n_event_samples: usize = dur * sr;
-    //        let start_sample: usize = e.start * sr;
-
-    //        for i in 0..n_event_samples {
-    //            let t: Float = i / sr;
-    //            // once t == n.end trigger envelope gates off
-    //        }
-    //    }
-
-    //let full_duration_secs =
-    //    voice.duration_secs + self.envelope.release_time();
-    //let start_sample =
-    //    (voice.start_time_secs * ctx.sample_rate as Float).round() as
-    // usize; let num_samples =
-    //    (full_duration_secs * ctx.sample_rate as Float).round() as usize;
-
-    //for i in 0..num_samples {
-    //    let t = i as Float / ctx.sample_rate as Float;
-    //    let amp = self.envelope.value(t, voice.duration_secs);
-    //    let sample =
-    //        self.oscillator.sample(voice.freq, t) * amp * voice.velocity;
-    //    let idx = start_sample + i;
-
-    //    if idx < buffer_len {
-    //        mix_buffer[idx] += sample;
-    //        loudness_sum[idx] += amp * voice.velocity;
-    //    }
-    //}
-
-    //    buf
-    //}
 
     fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
         let mut state = RenderState::default();
@@ -266,6 +198,60 @@ impl Instrument {
     }
 }
 
+pub trait UnpitchedInstrument {
+    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float;
+
+    /// Renders a MusicXML part
+    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+        let mut state = RenderState::default();
+        let sr = ctx.sample_rate;
+
+        let mut output = Vec::new();
+
+        for m in &part.measures {
+            for item in &m.items {
+                match item {
+                    MeasureItem::Note(note) => {
+                        if note.unpitched.is_some() {
+                            let dur = state.ticks_to_secs(note.duration);
+                            let n = state.ticks_to_samples(note.duration, sr);
+                            let start_sample = (state.time_secs() * sr as Float)
+                                .floor()
+                                as usize;
+
+                            if output.len() < start_sample + n {
+                                output.resize(start_sample + n, 0.0);
+                            }
+
+                            for i in 0..n {
+                                let t = i as Float / sr as Float;
+                                let sample = self.synth(t, dur, &mut state);
+                                output[start_sample + i] += sample;
+                            }
+                        }
+                        state.advance(note.duration);
+                    }
+
+                    MeasureItem::Direction(dir) => match &dir.kind {
+                        DirectionType::Metronome { per_minute, .. } => {
+                            state.tempo_bpm = *per_minute as Float;
+                        }
+                        DirectionType::Dynamics(dynamics) => {
+                            state.velocity = dynamics.normalized_velocity();
+                        }
+                        _ => {}
+                    },
+
+                    MeasureItem::Barline(_) => {}
+
+                    _ => {}
+                }
+            }
+        }
+        output
+    }
+}
+
 /// Mutable state used during the rendering process
 pub struct RenderState {
     pub cursor: Seconds,
@@ -281,13 +267,13 @@ pub struct RenderState {
 impl Default for RenderState {
     fn default() -> Self {
         Self {
-            cursor: 0.0,
-            saved_cursor: 0.0,
+            time_beats: 0.0,
             tempo_bpm: 120.0,
             velocity: 80.0 / 127.0, // mf
             divisions: 480,
             active_voices: vec![],
             ongoing_ties: HashMap::new(),
+            last_start_time_beats: 0.0,
         }
     }
 }
@@ -317,8 +303,21 @@ impl RenderState {
     pub fn save_cursor(&mut self) {
         self.saved_cursor = self.cursor;
     }
+
+    //pub fn advance(&mut self, duration_divs: u32) {
+    //    let duration_beats = duration_divs as Float / self.divisions as Float;
+    //    self.time_beats += duration_beats;
+    //}
+
+    //pub fn rewind(&mut self, duration_divs: u32) {
+    //    let duration_beats = duration_divs as Float / self.divisions as Float;
+    //    self.time_beats -= duration_beats;
+    //}
 }
 
+// TODO pitched instruments collect all of the notes found in a part into
+// voices. One note is assigned to each voice. This in inefficient; check if
+// this matters.
 pub struct NoteEvent {
     pub freq: Option<Float>,
     pub velocity: Float,
@@ -327,6 +326,7 @@ pub struct NoteEvent {
 }
 
 // CONCRETE INSTRUMENTS
+
 pub struct Synth {
     pub oscillator: Oscillator,
     // TODO make envelope choice more flexible

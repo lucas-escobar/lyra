@@ -6,4 +6,6 @@ pub type Hz = Float;
 pub type DutyCycle = Float;
 pub type Skew = Float;
 
-pub type SampleBuffer = Vec<Float>;
+// [L, R] buffer
+pub type StereoBuffer = Vec<(Float, Float)>;
+pub type MonoBuffer = Vec<Float>;
