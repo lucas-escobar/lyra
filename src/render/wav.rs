@@ -1,15 +1,16 @@
-use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs::create_dir_all;
 use std::path::Path;
 
-/// Saves a mono or stereo buffer to a path relative to the caller of the executable
-pub fn save_to_wav(
-    path: &str,
-    sample_rate: u32,
-    left: &[f64],
-    right: Option<&[f64]>,
-) {
-    let channels = if right.is_some() { 2 } else { 1 };
+use hound::{SampleFormat, WavSpec, WavWriter};
+
+use super::processor::AudioBuffer;
+
+pub fn save_to_wav(path: &str, sample_rate: u32, buffer: &AudioBuffer) {
+    let (channels, _len) = match buffer {
+        AudioBuffer::Mono(samples) => (1, samples.len()),
+        AudioBuffer::Stereo(samples) => (2, samples.len()),
+    };
+
     let spec = WavSpec {
         channels,
         sample_rate,
@@ -21,26 +22,20 @@ pub fn save_to_wav(
     if let Some(parent) = out_path.parent() {
         create_dir_all(parent).expect("Parent path should be created");
     }
-    let mut writer = WavWriter::create(out_path, spec).unwrap();
 
-    match right {
-        Some(right_buf) => {
-            assert_eq!(
-                left.len(),
-                right_buf.len(),
-                "Left and right buffers must be the same length"
-            );
-            for i in 0..left.len() {
-                let l = left[i] as f32;
-                let r = right_buf[i] as f32;
-                writer.write_sample(l).unwrap();
-                writer.write_sample(r).unwrap();
+    let mut writer =
+        WavWriter::create(out_path, spec).expect("Failed to create WAV writer");
+
+    match buffer {
+        AudioBuffer::Mono(samples) => {
+            for &s in samples {
+                writer.write_sample(s as f32).unwrap();
             }
         }
-        None => {
-            for &sample in left {
-                let val = sample as f32;
-                writer.write_sample(val).unwrap();
+        AudioBuffer::Stereo(samples) => {
+            for &(l, r) in samples {
+                writer.write_sample(l as f32).unwrap();
+                writer.write_sample(r as f32).unwrap();
             }
         }
     }

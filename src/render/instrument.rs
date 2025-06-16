@@ -2,13 +2,15 @@
 // of Part
 use std::collections::HashMap;
 
-use super::dsp::signal::{Oscillator, SignalSource};
+use super::dsp::signal::{Noise, NoiseType, Oscillator, SignalSource};
+use super::dsp::wave::Wave;
+use super::dsp::{ModulationMatrix, ModulationSource, ModulationTarget};
 use super::effect::EffectChain;
-use super::envelope::{Envelope, ADSR};
-use super::processor::RenderContext;
+use super::processor::{AudioBuffer, RenderContext};
 use super::types::{Float, Seconds};
 use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
-use crate::render::ModulationMatrix;
+use crate::render::wave::WaveShape;
+use crate::render::{ModulationRoute, ParametricEnvelope};
 
 /// The sound an instrument generates depends on the composition of layers. Each
 /// layer is mixed with the ones below it.
@@ -30,6 +32,8 @@ pub struct Instrument {
 
     /// Global level effects apply to all instrument layers
     pub fx: Option<EffectChain>,
+
+    pub is_unpitched: bool,
 }
 
 impl Instrument {
@@ -46,26 +50,36 @@ impl Instrument {
     }
 
     fn process_note_events(
-        &self,
+        &mut self,
         ctx: &RenderContext,
         note_events: Vec<NoteEvent>,
-    ) -> Vec<Float> {
+    ) -> AudioBuffer {
         let sr = ctx.sample_rate;
 
         // TODO calculate exact total length required
-        let total_length_in_samples = 60 * sr;
-        let mut final_buffer = vec![0.0; total_length_in_samples];
+        //let total_length_in_samples: usize = 60 * sr as usize;
+        //let mut final_buffer = vec![0.0; total_length_in_samples];
+        let mut buf = AudioBuffer::Mono(vec![]);
+
+        // TODO create 10 min long buffer as default size
+        buf.resize(60 * 10 * sr as usize);
 
         for event in note_events {
             let dur = (event.end - event.start) + self.max_release_time();
             let n_samples = (dur * sr as Float).round() as usize;
             let start_sample = (event.start * sr as Float).round() as usize;
 
-            // Each layer contributes to the note
-            for layer in &self.layers {
-                let mut layer_buffer = vec![0.0; n_samples];
+            // Gate ON for global mod envelopes
+            //if let Some(mods) = &mut self.mods {
+            //    mods.gate_on(event.start);
+            //}
 
-                // Gate ON
+            // Each layer contributes to the note
+            for layer in &mut self.layers {
+                let mut layer_buf = AudioBuffer::Mono(vec![]);
+                layer_buf.resize(n_samples);
+
+                // Gate ON for local mod envelopes
                 if let Some(mods) = &mut layer.mods {
                     mods.gate_on(event.start);
                 }
@@ -81,13 +95,14 @@ impl Instrument {
                     }
 
                     // Get modulated pitch/amplitude
-                    let pitch = layer
-                        .mods
-                        .as_ref()
-                        .map(|m| {
-                            m.apply(ModulationTarget::Pitch, event.pitch, t)
-                        })
-                        .unwrap_or(event.pitch);
+                    if let Some(f) = event.freq {
+                        let pitch = layer
+                            .mods
+                            .as_ref()
+                            .map(|m| m.apply(ModulationTarget::Pitch, f, t))
+                            .unwrap_or(f);
+                        layer.signal.set_frequency(pitch);
+                    }
 
                     let amp = layer
                         .mods
@@ -101,81 +116,37 @@ impl Instrument {
                         })
                         .unwrap_or(event.velocity);
 
-                    let sample = layer.signal.sample(pitch, t) * amp;
-                    layer_buffer[i] = sample;
+                    let sample = layer.signal.sample(t) * amp;
+                    layer_buf.set(i, sample);
                 }
 
                 // Apply layer effects
                 if let Some(fx) = &mut layer.fx {
-                    fx.process(AudioBuffer::Mono(layer_buffer.clone()), sr);
+                    fx.process(&mut layer_buf, sr);
                 }
 
                 // Mix into final buffer
-                for (i, sample) in layer_buffer.iter().enumerate() {
-                    let idx = start_sample + i;
-                    if idx < final_buffer.len() {
-                        final_buffer[idx] += sample;
-                    }
-                }
+                buf.add_offset(&layer_buf, start_sample);
             }
         }
 
         // Apply global FX if present
         if let Some(global_fx) = &mut self.fx {
-            global_fx.process(AudioBuffer::Mono(final_buffer.clone()), sr);
+            global_fx.process(&mut buf, sr);
         }
 
-        final_buffer
+        buf
     }
 
-    //fn process_note_events(
-    //    &self,
-    //    ctx: &RenderContext,
-    //    note_events: Vec<NoteEvent>,
-    //) -> Vec<Float> {
-    //    let buf: Vec<Float> = !vec![];
-    //    let sr = ctx.sample_rate;
-
-    //    for e in &note_events {
-    //        // trigger envelope gate on
-    //        let dur = (e.end - e.start) + self.envelope.release_duration();
-    //        let n_event_samples: usize = dur * sr;
-    //        let start_sample: usize = e.start * sr;
-
-    //        for i in 0..n_event_samples {
-    //            let t: Float = i / sr;
-    //            // once t == n.end trigger envelope gates off
-    //        }
-    //    }
-
-    //let full_duration_secs =
-    //    voice.duration_secs + self.envelope.release_time();
-    //let start_sample =
-    //    (voice.start_time_secs * ctx.sample_rate as Float).round() as
-    // usize; let num_samples =
-    //    (full_duration_secs * ctx.sample_rate as Float).round() as usize;
-
-    //for i in 0..num_samples {
-    //    let t = i as Float / ctx.sample_rate as Float;
-    //    let amp = self.envelope.value(t, voice.duration_secs);
-    //    let sample =
-    //        self.oscillator.sample(voice.freq, t) * amp * voice.velocity;
-    //    let idx = start_sample + i;
-
-    //    if idx < buffer_len {
-    //        mix_buffer[idx] += sample;
-    //        loudness_sum[idx] += amp * voice.velocity;
-    //    }
-    //}
-
-    //    buf
-    //}
-
-    fn render_part(&self, part: &Part, ctx: &RenderContext) -> Vec<Float> {
+    pub fn render_part(
+        &mut self,
+        part: &Part,
+        ctx: &RenderContext,
+    ) -> AudioBuffer {
         let mut state = RenderState::default();
 
         // MusicXML part will collect note events during parsing
-        let note_events: Vec<NoteEvent> = vec![];
+        let mut note_events: Vec<NoteEvent> = vec![];
 
         // Flatten measures
         // TODO delegate this to a part fn
@@ -196,7 +167,7 @@ impl Instrument {
                             velocity: state.velocity,
                             start: state.saved_cursor,
                             end: state.saved_cursor + note_duration,
-                            freq: Some(pitch.frequency()),
+                            freq: Some(pitch.to_frequency()),
                         };
 
                         match note.tie {
@@ -225,7 +196,7 @@ impl Instrument {
                             None => {}
                         }
                         note_events.push(event);
-                    } else if let Some(unpitched) = &note.unpitched {
+                    } else if let Some(_) = &note.unpitched {
                         note_events.push(NoteEvent {
                             velocity: state.velocity,
                             start: state.saved_cursor,
@@ -297,10 +268,6 @@ impl RenderState {
         60.0 / self.tempo_bpm
     }
 
-    pub fn time_secs(&self) -> Float {
-        self.time_beats * self.seconds_per_beat()
-    }
-
     /// Convert a duration in ticks to a duration in samples
     pub fn ticks_to_samples(&self, duration: u32, sample_rate: u32) -> usize {
         let dur_beats = duration as Float / self.divisions as Float;
@@ -327,195 +294,106 @@ pub struct NoteEvent {
 }
 
 // CONCRETE INSTRUMENTS
-pub struct Synth {
-    pub oscillator: Oscillator,
-    // TODO make envelope choice more flexible
-    pub envelope: ADSR,
-}
 
-impl Synth {
-    pub fn process_voices(
-        &self,
-        ctx: &RenderContext,
-        state: &mut RenderState,
-    ) -> Vec<Float> {
-        // TODO calculate precice buffer len
-        let buffer_len: usize = (ctx.sample_rate * 60) as usize;
-
-        // TODO should these be fixed sized arrays?
-        let mut mix_buffer: Vec<Float> = vec![0.0; buffer_len];
-        let mut loudness_sum: Vec<Float> = vec![0.0; buffer_len];
-
-        for voice in &state.active_voices {
-            let full_duration_secs =
-                voice.duration_secs + self.envelope.release_time();
-            let start_sample = (voice.start_time_secs
-                * ctx.sample_rate as Float)
-                .round() as usize;
-            let num_samples = (full_duration_secs * ctx.sample_rate as Float)
-                .round() as usize;
-
-            for i in 0..num_samples {
-                let t = i as Float / ctx.sample_rate as Float;
-                let amp = self.envelope.value(t, voice.duration_secs);
-                let sample = self.oscillator.sample(voice.freq, t)
-                    * amp
-                    * voice.velocity;
-                let idx = start_sample + i;
-
-                if idx < buffer_len {
-                    mix_buffer[idx] += sample;
-                    loudness_sum[idx] += amp * voice.velocity;
-                }
-            }
-        }
-
-        let mut final_buffer = vec![0.0; buffer_len];
-        let mut smoothed_gain = 1.0;
-        let alpha = 0.01;
-        let mut gain_frozen = false;
-
-        for i in 0..buffer_len {
-            let raw_gain = if loudness_sum[i] > 0.0 {
-                gain_frozen = false;
-                1.0 / (loudness_sum[i] + 1.0).powf(0.8)
-            } else if !gain_frozen {
-                gain_frozen = true;
-                smoothed_gain
-            } else {
-                smoothed_gain
-            };
-
-            smoothed_gain = alpha * raw_gain + (1.0 - alpha) * smoothed_gain;
-            final_buffer[i] = (mix_buffer[i] * smoothed_gain).clamp(-1.0, 1.0);
-        }
-
-        final_buffer
+pub fn kick_drum() -> Instrument {
+    Instrument {
+        is_unpitched: true,
+        layers: vec![InstrumentLayer {
+            signal: SignalSource::Oscillator(Oscillator {
+                wave: Wave {
+                    source: Box::new(WaveShape::Sine),
+                    modifiers: None,
+                },
+                freq: 120.0,
+                phase: 0.0,
+            }),
+            mods: Some(ModulationMatrix {
+                routes: vec![
+                    ModulationRoute {
+                        source: ModulationSource::Envelope(
+                            ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 3.0),
+                        ),
+                        target: ModulationTarget::Amplitude,
+                        depth: 1.0,
+                    },
+                    ModulationRoute {
+                        source: ModulationSource::Envelope(
+                            ParametricEnvelope::from_decay(
+                                120.0, 50.0, 2.0, 5.0,
+                            ),
+                        ),
+                        target: ModulationTarget::Pitch,
+                        depth: 1.0,
+                    },
+                ],
+            }),
+            fx: None,
+        }],
+        mods: None,
+        fx: None,
     }
 }
 
-pub struct Transient {
-    pub duration: Float,
-    pub amplitude: Float,
-    pub freq: Float, // for sine or tone-based clicks
-}
-
-impl Transient {
-    pub fn sample(&self, t: Float) -> Float {
-        if t >= self.duration {
-            0.0
-        } else {
-            (2.0 * PI * self.freq * t).sin() * self.amplitude
-        }
-    }
-}
-
-pub struct KickDrum {
-    pub amp_env: ParametricEnvelope,
-    pub freq_env: ParametricEnvelope,
-    pub distortion: Option<Distortion>,
-    pub transient: Option<Transient>,
-}
-
-impl Default for KickDrum {
-    fn default() -> Self {
-        Self {
-            amp_env: ParametricEnvelope {
-                start: 1.0,
-                end: 0.0,
-                exponent: 3.0, // Fast exponential decay
+pub fn snare_drum() -> Instrument {
+    Instrument {
+        is_unpitched: true,
+        layers: vec![
+            InstrumentLayer {
+                signal: SignalSource::Oscillator(Oscillator {
+                    wave: Wave {
+                        source: Box::new(WaveShape::Sine),
+                        modifiers: None,
+                    },
+                    freq: 180.0,
+                    phase: 0.0,
+                }),
+                mods: Some(ModulationMatrix {
+                    routes: vec![ModulationRoute {
+                        source: ModulationSource::Envelope(
+                            ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 6.0),
+                        ),
+                        target: ModulationTarget::Amplitude,
+                        depth: 1.0,
+                    }],
+                }),
+                fx: None,
             },
-            freq_env: ParametricEnvelope {
-                start: 120.0,  // Starts high for transient punch
-                end: 30.0,     // Drops to bass
-                exponent: 5.0, // Sharp downward pitch drop
+            InstrumentLayer {
+                signal: SignalSource::Noise(Noise::new(NoiseType::White, 42)),
+                mods: Some(ModulationMatrix {
+                    routes: vec![ModulationRoute {
+                        source: ModulationSource::Envelope(
+                            ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 3.0),
+                        ),
+                        target: ModulationTarget::Amplitude,
+                        depth: 1.0,
+                    }],
+                }),
+                fx: None,
             },
-            distortion: Some(Distortion { drive: 1.2 }), // Adds grit
-            transient: None, // Optional: You can later add a snappy click here
-        }
+        ],
+        mods: None,
+        fx: None,
     }
 }
 
-impl UnpitchedInstrument for KickDrum {
-    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float {
-        let amp = self.amp_env.value(t, dur);
-        let freq = self.freq_env.value(t, dur);
-        let mut sample =
-            OscillatorType::Sine.sample(freq, t) * amp * state.velocity;
-        if let Some(d) = &self.distortion {
-            sample = d.apply(sample)
-        };
-        sample
-    }
-}
-
-pub struct Envelopes {
-    pub amplitude: ParametricEnvelope,
-    pub noise: ParametricEnvelope,
-    pub tone: Option<ParametricEnvelope>,
-}
-
-pub struct SnareDrum {
-    pub envs: Envelopes,
-    pub freq: Option<Hz>,
-    pub distortion: Option<Distortion>,
-    pub transient: Option<Transient>,
-}
-
-impl Default for SnareDrum {
-    fn default() -> Self {
-        Self {
-            amp_env: ParametricEnvelope::from_decay(1.0, 0.0, 3.0),
-            noise_env: ParametricEnvelope::from_decay(1.0, 0.0, 3.0),
-            tone_env: ParametricEnvelope::from_decay(1.0, 0.0, 6.0),
-            freq: Some(180.0), // optional tonal body
-            distortion: Some(Distortion { drive: 3.0 }),
-            transient: None,
-        }
-    }
-}
-
-impl UnpitchedInstrument for SnareDrum {
-    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float {
-        let amp = self.amp_env.value(t, dur);
-        let noise_amp = self.noise_env.value(t, dur);
-        let noise_sample: Float = state.rng.random_range(-1.0..1.0);
-
-        let tonal_sample =
-            if let (Some(freq), Some(env)) = (self.freq, &self.tone_env) {
-                let tone_amp = env.value(t, dur);
-                Oscillator(2.0 * PI * freq * t).sin() * tone_amp
-            } else {
-                0.0
-            };
-
-        let mut sample = (noise_sample * noise_amp) + tonal_sample;
-        sample *= amp * state.velocity;
-
-        if let Some(d) = &self.distortion {
-            sample = d.apply(sample)
-        };
-        sample
-    }
-}
-
-pub struct HiHat {
-    pub amp_env: ParametricEnvelope,
-}
-
-impl Default for HiHat {
-    fn default() -> Self {
-        Self {
-            amp_env: ParametricEnvelope { start: 1.0, end: 0.0, exponent: 8.0 },
-        }
-    }
-}
-
-impl UnpitchedInstrument for HiHat {
-    fn synth(&self, t: Float, dur: Float, state: &mut RenderState) -> Float {
-        let amp = self.amp_env.value(t, dur);
-        let noise = state.rng.random_range(-1.0..1.0); // white noise
-        let sample = noise * amp * state.velocity;
-        sample
+pub fn hihat() -> Instrument {
+    Instrument {
+        is_unpitched: true,
+        layers: vec![InstrumentLayer {
+            signal: SignalSource::Noise(Noise::new(NoiseType::White, 42)),
+            mods: Some(ModulationMatrix {
+                routes: vec![ModulationRoute {
+                    source: ModulationSource::Envelope(
+                        ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 8.0),
+                    ),
+                    target: ModulationTarget::Amplitude,
+                    depth: 1.0,
+                }],
+            }),
+            fx: None,
+        }],
+        mods: None,
+        fx: None,
     }
 }

@@ -1,12 +1,8 @@
-use super::types::{Float, MonoBuffer, StereoBuffer};
-
-pub enum AudioBuffer {
-    Mono(MonoBuffer),
-    Stereo(StereoBuffer),
-}
+use super::processor::AudioBuffer;
+use super::types::Float;
 
 pub trait AudioEffect {
-    fn process(&mut self, buffer: AudioBuffer, sample_rate: u32);
+    fn process(&mut self, buffer: &mut AudioBuffer, sample_rate: u32);
 }
 
 pub struct EffectChain {
@@ -14,9 +10,9 @@ pub struct EffectChain {
 }
 
 impl EffectChain {
-    pub fn process(&mut self, buffer: AudioBuffer, sample_rate: u32) {
+    pub fn process(&mut self, buffer: &mut AudioBuffer, sample_rate: u32) {
         for fx in &mut self.effects {
-            fx.process(buffer.clone(), sample_rate);
+            fx.process(buffer, sample_rate);
         }
     }
 }
@@ -27,20 +23,18 @@ pub struct Gain {
 }
 
 impl AudioEffect for Gain {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
-                for s in &mut buf {
+            AudioBuffer::Mono(ref mut buf) => {
+                for s in buf {
                     *s *= self.amount;
                 }
-                AudioBuffer::Mono(buf)
             }
-            AudioBuffer::Stereo(mut buf) => {
-                for (l, r) in &mut buf {
+            AudioBuffer::Stereo(ref mut buf) => {
+                for (l, r) in buf {
                     *l *= self.amount;
                     *r *= self.amount;
                 }
-                AudioBuffer::Stereo(buf)
             }
         }
     }
@@ -59,32 +53,28 @@ impl LowPass {
 }
 
 impl AudioEffect for LowPass {
-    fn process(
-        &mut self,
-        buffer: AudioBuffer,
-        sample_rate: u32,
-    ) -> AudioBuffer {
-        let alpha = (2.0 * PI * self.cutoff_hz / sample_rate as Float).min(1.0);
+    fn process(&mut self, buffer: &mut AudioBuffer, sample_rate: u32) {
+        let alpha = (2.0 * std::f64::consts::PI * self.cutoff_hz
+            / sample_rate as Float)
+            .min(1.0);
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
+            AudioBuffer::Mono(ref mut buf) => {
                 let mut last = self.state.map(|s| s.0).unwrap_or(0.0);
-                for s in &mut buf {
+                for s in buf {
                     last += alpha * (*s - last);
                     *s = last;
                 }
                 self.state = Some((last, 0.0));
-                AudioBuffer::Mono(buf)
             }
-            AudioBuffer::Stereo(mut buf) => {
+            AudioBuffer::Stereo(ref mut buf) => {
                 let (mut l_last, mut r_last) = self.state.unwrap_or((0.0, 0.0));
-                for (l, r) in &mut buf {
+                for (l, r) in buf {
                     l_last += alpha * (*l - l_last);
                     r_last += alpha * (*r - r_last);
                     *l = l_last;
                     *r = r_last;
                 }
                 self.state = Some((l_last, r_last));
-                AudioBuffer::Stereo(buf)
             }
         }
     }
@@ -94,24 +84,22 @@ impl AudioEffect for LowPass {
 pub struct Saturation;
 
 impl AudioEffect for Saturation {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
         fn saturate(x: Float) -> Float {
             (x + 0.5 * x.powi(3)).clamp(-1.0, 1.0)
         }
 
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
-                for s in &mut buf {
+            AudioBuffer::Mono(ref mut buf) => {
+                for s in buf {
                     *s = saturate(*s);
                 }
-                AudioBuffer::Mono(buf)
             }
-            AudioBuffer::Stereo(mut buf) => {
-                for (l, r) in &mut buf {
+            AudioBuffer::Stereo(ref mut buf) => {
+                for (l, r) in buf {
                     *l = saturate(*l);
                     *r = saturate(*r);
                 }
-                AudioBuffer::Stereo(buf)
             }
         }
     }
@@ -123,21 +111,19 @@ pub struct Distortion {
 }
 
 impl AudioEffect for Distortion {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
         let th = self.threshold.abs().max(0.01);
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
-                for s in &mut buf {
+            AudioBuffer::Mono(ref mut buf) => {
+                for s in buf {
                     *s = s.clamp(-th, th);
                 }
-                AudioBuffer::Mono(buf)
             }
-            AudioBuffer::Stereo(mut buf) => {
-                for (l, r) in &mut buf {
+            AudioBuffer::Stereo(ref mut buf) => {
+                for (l, r) in buf {
                     *l = l.clamp(-th, th);
                     *r = r.clamp(-th, th);
                 }
-                AudioBuffer::Stereo(buf)
             }
         }
     }
@@ -149,21 +135,19 @@ pub struct Bitcrusher {
 }
 
 impl AudioEffect for Bitcrusher {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
         let levels = 2u32.pow(self.bits.min(24)) as Float;
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
-                for s in &mut buf {
+            AudioBuffer::Mono(ref mut buf) => {
+                for s in buf {
                     *s = ((*s * levels).round()) / levels;
                 }
-                AudioBuffer::Mono(buf)
             }
-            AudioBuffer::Stereo(mut buf) => {
-                for (l, r) in &mut buf {
+            AudioBuffer::Stereo(ref mut buf) => {
+                for (l, r) in buf {
                     *l = ((*l * levels).round()) / levels;
                     *r = ((*r * levels).round()) / levels;
                 }
-                AudioBuffer::Stereo(buf)
             }
         }
     }
@@ -191,18 +175,17 @@ impl Delay {
 }
 
 impl AudioEffect for Delay {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
-                for s in &mut buf {
+            AudioBuffer::Mono(ref mut buf) => {
+                for s in buf {
                     let delayed = self.buffer[self.pos];
                     self.buffer[self.pos] = *s + delayed * self.feedback;
                     *s = *s * (1.0 - self.mix) + delayed * self.mix;
                     self.pos = (self.pos + 1) % self.buffer.len();
                 }
-                AudioBuffer::Mono(buf)
             }
-            _ => buffer, // TODO: stereo delay
+            _ => {} // TODO: stereo delay
         }
     }
 }
@@ -211,9 +194,7 @@ impl AudioEffect for Delay {
 pub struct Bypass;
 
 impl AudioEffect for Bypass {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
-        buffer
-    }
+    fn process(&mut self, _buffer: &mut AudioBuffer, _sr: u32) {}
 }
 
 /// Simple Schroeder reverb with comb + allpass filters
@@ -246,10 +227,10 @@ impl SimpleReverb {
 }
 
 impl AudioEffect for SimpleReverb {
-    fn process(&mut self, buffer: AudioBuffer, _sr: u32) -> AudioBuffer {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
         match buffer {
-            AudioBuffer::Mono(mut buf) => {
-                for s in &mut buf {
+            AudioBuffer::Mono(ref mut buf) => {
+                for s in buf {
                     // === Comb Filters ===
                     let mut comb_sum = 0.0;
                     for (i, buffer) in self.comb_buffers.iter_mut().enumerate()
@@ -277,8 +258,6 @@ impl AudioEffect for SimpleReverb {
                     let wet = y;
                     *s = *s * (1.0 - self.mix) + wet * self.mix;
                 }
-
-                AudioBuffer::Mono(buf)
             }
             _ => todo!("Stereo reverb not implemented yet"),
         }

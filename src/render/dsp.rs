@@ -1,12 +1,11 @@
 /// Tools for generating and modulating signals
-use rand::Rng;
-
 use super::types::{Float, Seconds};
 
 pub mod signal {
     use std::cell::RefCell;
 
     use rand::rngs::StdRng;
+    use rand::Rng;
     use rand::SeedableRng;
 
     use super::super::types::{Float, Hz, Seconds};
@@ -25,8 +24,15 @@ pub mod signal {
             match self {
                 Self::Oscillator(osc) => osc.sample(t),
                 Self::Noise(n) => n.sample(),
-                Self::Sampler(s) => s.sample(t),
+                //Self::Sampler(s) => s.sample(t),
                 Self::Silence => 0.0,
+                _ => panic!("Not implemented"),
+            }
+        }
+
+        pub fn set_frequency(&mut self, freq: Float) {
+            if let SignalSource::Oscillator(ref mut osc) = self {
+                osc.freq = freq;
             }
         }
     }
@@ -49,7 +55,6 @@ pub mod signal {
     impl Oscillator {
         /// Return sample of waveform at specified frequency (f) and time (t)
         pub fn sample(&self, t: Seconds) -> Float {
-            let f = self.freq;
             self.wave.sample(self.freq, t)
         }
     }
@@ -80,14 +85,15 @@ pub mod signal {
 
     impl Noise {
         pub fn sample(&self) -> Float {
-            let mut rng = self.rng.borrow_mut();
-
             match self.kind {
-                NoiseType::White => rng.gen_range(-1.0..1.0),
+                NoiseType::White => {
+                    self.rng.borrow_mut().random_range(-1.0..1.0)
+                }
                 NoiseType::Brown => {
                     let mut last = self.last_sample.borrow_mut();
-                    let next =
-                        (*last + rng.gen_range(-0.02..0.02)).clamp(-1.0, 1.0);
+                    let next = (*last
+                        + self.rng.borrow_mut().random_range(-0.02..0.02))
+                    .clamp(-1.0, 1.0);
                     *last = next;
                     next
                 }
@@ -99,37 +105,37 @@ pub mod signal {
 pub mod wave {
     use std::f64::consts::PI;
 
-    use super::super::types::{
-        DutyCycle, Float, Hz, SampleBuffer, Seconds, Skew,
-    };
+    use super::super::types::{DutyCycle, Float, Hz, Seconds, Skew};
 
     pub struct Wave {
         pub source: Box<dyn WaveSource>,
-        pub modifiers: Vec<Box<dyn WaveModifier>>,
+        pub modifiers: Option<Vec<Box<dyn WaveModifier>>>,
     }
 
     impl Default for Wave {
         fn default() -> Self {
-            Self { source: Box::new(WaveShape::Sine), modifiers: vec![] }
+            Self { source: Box::new(WaveShape::Sine), modifiers: None }
         }
     }
 
     impl Wave {
         pub fn sample(&self, frequency: Hz, t: Seconds) -> Float {
-            let mut sample = self.source.sample(frequency, t);
-            for modifier in &self.modifiers {
-                sample = modifier.apply(sample);
+            let mut s = self.source.sample(frequency, t);
+            if let Some(modifiers) = &self.modifiers {
+                for m in modifiers {
+                    s = m.apply(s);
+                }
             }
-            sample
+            s
         }
-    }
-
-    pub trait WaveSource {
-        fn sample(&self, frequency: Hz, t: Seconds) -> Float;
     }
 
     pub trait WaveModifier {
         fn apply(&self, sample: Float) -> Float;
+    }
+
+    pub trait WaveSource {
+        fn sample(&self, frequency: Hz, t: Seconds) -> Float;
     }
 
     pub struct Wavetable1D {
@@ -172,19 +178,19 @@ pub mod wave {
             match self {
                 Self::Sine => phase.sin(),
                 Self::Saw(skew) => {
-                    if skew == 0.5 {
+                    if *skew == 0.5 {
                         // Classic symmetric sawtooth: rising from -1 to 1
                         2.0 * (phase - 0.5)
-                    } else if skew < &0.5 {
+                    } else if *skew < 0.5 {
                         let norm_phase = phase / (2.0 * skew);
-                        if phase < skew {
+                        if phase < *skew {
                             2.0 * norm_phase - 1.0
                         } else {
                             1.0
                         }
                     } else {
                         let norm_phase = (phase - skew) / (1.0 - skew);
-                        if phase >= skew {
+                        if phase >= *skew {
                             -2.0 * norm_phase + 1.0
                         } else {
                             -1.0
@@ -192,10 +198,10 @@ pub mod wave {
                     }
                 }
                 Self::Triangle(skew) => {
-                    if skew == 0.5 {
+                    if *skew == 0.5 {
                         // Classic triangle
                         4.0 * (phase - 0.5).abs() - 1.0
-                    } else if phase < skew {
+                    } else if phase < *skew {
                         // Rising segment
                         (2.0 / skew) * phase - 1.0
                     } else {
@@ -205,7 +211,7 @@ pub mod wave {
                 }
                 Self::Pulse(duty) => {
                     let phase_fraction = (frequency * t / (2.0 * PI)) % 1.0;
-                    if phase_fraction < duty {
+                    if phase_fraction < *duty {
                         1.0
                     } else {
                         -1.0
@@ -233,11 +239,11 @@ pub mod wave {
     }
 
     impl WaveModifier for Clip {
-        fn apply(&self, x: Float) -> Float {
+        fn apply(&self, sample: Float) -> Float {
             match self.mode {
-                ClipMode::Hard => x.clamp(-self.threshold, self.threshold),
+                ClipMode::Hard => sample.clamp(-self.threshold, self.threshold),
                 ClipMode::Soft => {
-                    let x_norm = x / self.threshold;
+                    let x_norm = sample / self.threshold;
                     self.threshold * x_norm.tanh()
                 }
             }
@@ -293,13 +299,14 @@ pub enum ModulationSource {
 impl ModulationSource {
     fn value_at(&self, t: Seconds) -> Float {
         match self {
-            Self::Constant(v) => v,
+            Self::Constant(v) => *v,
             Self::Envelope(e) => e.value(t),
             Self::LowFrequencyOscillator(osc) => osc.sample(t),
         }
     }
 }
 
+#[derive(PartialEq)]
 // Assumes all modulation targets are represented by Float value
 pub enum ModulationTarget {
     // Oscillator / note
@@ -398,6 +405,7 @@ pub struct EnvelopeStage {
     pub end_level: Float,
 }
 
+#[derive(Debug, Clone)]
 enum StageKind {
     /// A ramp with a time duration and curvature.
     /// curve: 1.0 = linear, >1.0 = exponential, <1.0 = logarithmic

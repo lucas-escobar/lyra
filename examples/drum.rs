@@ -1,8 +1,7 @@
 use lyra::compose::{AttributesCreateInfo, Score, ScoreCreateInfo};
 use lyra::render::{
-    save_to_wav, AnyInstrument, AudioProcessor, AudioProcessorCreateInfo,
-    GainEffect, HiHat, KickDrum, RenderContext, SnareDrum, Track,
-    TrackCreateInfo,
+    hihat, kick_drum, snare_drum, AudioProcessor, AudioProcessorCreateInfo,
+    EffectChain, Gain, RenderContext, Track, TrackCreateInfo,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,11 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     })?;
 
-    // Define instruments
-    let kick = KickDrum::default();
-    let snare = SnareDrum::default();
-    let hihat = HiHat::default();
-
     // Create and process tracks
     let ctx = &RenderContext { sample_rate: SAMPLE_RATE };
     AudioProcessor::new(AudioProcessorCreateInfo {
@@ -62,24 +56,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracks: vec![
             Track::new(TrackCreateInfo {
                 part: score.get_part("Kick").unwrap(),
-                instrument: &AnyInstrument::unpitched(kick),
+                instrument: &mut kick_drum(),
                 fx: None,
                 ctx,
             }),
             Track::new(TrackCreateInfo {
                 part: score.get_part("Snare").unwrap(),
-                instrument: &AnyInstrument::unpitched(snare),
+                instrument: &mut snare_drum(),
                 fx: None,
                 ctx,
             }),
             Track::new(TrackCreateInfo {
                 part: score.get_part("High Hat").unwrap(),
-                instrument: &AnyInstrument::unpitched(hihat),
+                instrument: &mut hihat(),
                 fx: None,
                 ctx,
             }),
         ],
-        master_fx: vec![Box::new(GainEffect { gain: 0.8 })],
+        master_fx: EffectChain {
+            effects: vec![Box::new(Gain { amount: 0.8 })],
+        },
     })
     .save_to(OUT_PATH);
 
