@@ -327,7 +327,7 @@ pub fn kick_drum() -> Instrument {
                 routes: vec![
                     ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 3.0),
+                            ParametricEnvelope::from_decay(0.0, -1.0, 0.3, 3.0),
                         ),
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Multiply,
@@ -340,7 +340,9 @@ pub fn kick_drum() -> Instrument {
                         //    ),
                         //),
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.33, 0.3, 5.0),
+                            ParametricEnvelope::from_decay(
+                                0.0, -0.66, 0.3, 5.0,
+                            ),
                         ),
                         target: ModulationTarget::Pitch,
                         mode: ModulationMode::Multiply,
@@ -360,7 +362,7 @@ pub fn snare_drum() -> Instrument {
         is_unpitched: true,
         layers: vec![
             InstrumentLayer {
-                volume: 0.3,
+                volume: 0.75,
                 signal: SignalSource::Oscillator(Oscillator {
                     wave: Wave {
                         source: Box::new(WaveShape::Sine),
@@ -373,7 +375,7 @@ pub fn snare_drum() -> Instrument {
                 mods: Some(ModulationMatrix {
                     routes: vec![ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 6.0),
+                            ParametricEnvelope::from_decay(0.0, -1.0, 0.3, 6.0),
                         ),
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Multiply,
@@ -414,7 +416,7 @@ pub fn hihat() -> Instrument {
             mods: Some(ModulationMatrix {
                 routes: vec![ModulationRoute {
                     source: ModulationSource::Envelope(
-                        ParametricEnvelope::from_decay(1.0, 0.0, 0.15, 8.0),
+                        ParametricEnvelope::from_decay(0.0, -1.0, 0.15, 8.0),
                     ),
                     target: ModulationTarget::Amplitude,
                     mode: ModulationMode::Multiply,

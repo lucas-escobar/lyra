@@ -358,7 +358,7 @@ pub struct ModulationRoute {
     pub source: ModulationSource,
     pub target: ModulationTarget,
     pub mode: ModulationMode,
-    pub depth: Float, // 0.0..1.0
+    pub depth: Float, // -1.0..1.0
 }
 
 impl ModulationRoute {
@@ -366,8 +366,7 @@ impl ModulationRoute {
         let mod_val = self.source.value_at(t) * self.depth;
         match self.mode {
             ModulationMode::Add => base + mod_val,
-            // TODO determine better way to control 0 centered multiplication
-            ModulationMode::Multiply => base * mod_val,
+            ModulationMode::Multiply => base * (1.0 + mod_val),
         }
     }
 }
@@ -422,7 +421,7 @@ pub struct EnvelopeStage {
 }
 
 #[derive(Debug, Clone)]
-enum StageKind {
+pub enum StageKind {
     /// A ramp with a time duration and curvature.
     /// curve: 1.0 = linear, >1.0 = exponential, <1.0 = logarithmic
     Ramp { duration: Float, curve: Float },
