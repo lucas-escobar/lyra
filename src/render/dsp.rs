@@ -337,22 +337,39 @@ pub enum ModulationTarget {
     ModulationDepth,
 }
 
-impl ModulationTarget {
-    pub fn apply(&self, base: Float, mod_val: Float) -> Float {
-        match self {
-            Self::Pitch => base + mod_val,
-            Self::Amplitude => (base * (1.0 + mod_val)).clamp(0.0, 1.0),
-            Self::Velocity => (base * (1.0 + mod_val)).clamp(0.0, 1.0),
-            Self::FilterCutoff => (base + mod_val).max(20.0), /* avoid sub-audio */
-            _ => panic!("Modulation target not implemented"),
-        }
-    }
+//impl ModulationTarget {
+//    pub fn apply(&self, base: Float, mod_val: Float) -> Float {
+//        match self {
+//            Self::Pitch => base + mod_val,
+//            Self::Amplitude => base * (1.0 + mod_val),
+//            Self::Velocity => base * (1.0 + mod_val),
+//            Self::FilterCutoff => base + mod_val,
+//            _ => panic!("Modulation target not implemented"),
+//        }
+//    }
+//}
+
+pub enum ModulationMode {
+    Add,
+    Multiply,
 }
 
 pub struct ModulationRoute {
     pub source: ModulationSource,
     pub target: ModulationTarget,
+    pub mode: ModulationMode,
     pub depth: Float, // 0.0..1.0
+}
+
+impl ModulationRoute {
+    pub fn apply(&self, base: Float, t: Seconds) -> Float {
+        let mod_val = self.source.value_at(t) * self.depth;
+        match self.mode {
+            ModulationMode::Add => base + mod_val,
+            // TODO determine better way to control 0 centered multiplication
+            ModulationMode::Multiply => base * mod_val,
+        }
+    }
 }
 
 pub struct ModulationMatrix {
@@ -371,8 +388,7 @@ impl ModulationMatrix {
 
         for route in &self.routes {
             if route.target == target {
-                let mod_val = route.source.value_at(t) * route.depth;
-                combined = target.apply(combined, mod_val);
+                combined = route.apply(combined, t);
             }
         }
 

@@ -10,7 +10,7 @@ use super::processor::{AudioBuffer, RenderContext};
 use super::types::{Float, Seconds};
 use crate::compose::{DirectionType, MeasureItem, Part, StartStop};
 use crate::render::wave::WaveShape;
-use crate::render::{ModulationRoute, ParametricEnvelope};
+use crate::render::{ModulationMode, ModulationRoute, ParametricEnvelope};
 
 /// The sound an instrument generates depends on the composition of layers. Each
 /// layer is mixed with the ones below it.
@@ -22,6 +22,12 @@ pub struct InstrumentLayer {
 
     /// Layer-local effects
     pub fx: Option<EffectChain>,
+
+    /// The base frequency used for unpitched layers.
+    pub base_freq: Option<Float>,
+
+    /// Volume of a given layer from 0.0 to 1.0
+    pub volume: Float,
 }
 
 pub struct Instrument {
@@ -56,12 +62,7 @@ impl Instrument {
     ) -> AudioBuffer {
         let sr = ctx.sample_rate;
 
-        // TODO calculate exact total length required
-        //let total_length_in_samples: usize = 60 * sr as usize;
-        //let mut final_buffer = vec![0.0; total_length_in_samples];
         let mut buf = AudioBuffer::Mono(vec![]);
-
-        // TODO create 10 min long buffer as default size
         buf.resize(60 * 10 * sr as usize);
 
         for event in note_events {
@@ -96,12 +97,25 @@ impl Instrument {
 
                     // Get modulated pitch/amplitude
                     if let Some(f) = event.freq {
+                        // Pitched instrument
                         let pitch = layer
                             .mods
                             .as_ref()
                             .map(|m| m.apply(ModulationTarget::Pitch, f, t))
                             .unwrap_or(f);
                         layer.signal.set_frequency(pitch);
+                    } else {
+                        // Unpitched instrument
+                        if let Some(f) = layer.base_freq {
+                            let pitch = layer
+                                .mods
+                                .as_ref()
+                                .map(|m| m.apply(ModulationTarget::Pitch, f, t))
+                                .unwrap_or(f);
+                            layer.signal.set_frequency(pitch);
+                        } else {
+                            layer.signal.set_frequency(0.0);
+                        }
                     }
 
                     let amp = layer
@@ -116,7 +130,7 @@ impl Instrument {
                         })
                         .unwrap_or(event.velocity);
 
-                    let sample = layer.signal.sample(t) * amp;
+                    let sample = layer.signal.sample(t) * amp * layer.volume;
                     layer_buf.set(i, sample);
                 }
 
@@ -307,22 +321,29 @@ pub fn kick_drum() -> Instrument {
                 freq: 120.0,
                 phase: 0.0,
             }),
+            volume: 1.0,
+            base_freq: Some(120.0),
             mods: Some(ModulationMatrix {
                 routes: vec![
                     ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 3.0),
+                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 3.0),
                         ),
                         target: ModulationTarget::Amplitude,
+                        mode: ModulationMode::Multiply,
                         depth: 1.0,
                     },
                     ModulationRoute {
+                        //source: ModulationSource::Envelope(
+                        //    ParametricEnvelope::from_decay(
+                        //        120.0, 50.0, 0.3, 5.0,
+                        //    ),
+                        //),
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(
-                                120.0, 50.0, 2.0, 5.0,
-                            ),
+                            ParametricEnvelope::from_decay(1.0, 0.33, 0.3, 5.0),
                         ),
                         target: ModulationTarget::Pitch,
+                        mode: ModulationMode::Multiply,
                         depth: 1.0,
                     },
                 ],
@@ -339,6 +360,7 @@ pub fn snare_drum() -> Instrument {
         is_unpitched: true,
         layers: vec![
             InstrumentLayer {
+                volume: 0.3,
                 signal: SignalSource::Oscillator(Oscillator {
                     wave: Wave {
                         source: Box::new(WaveShape::Sine),
@@ -347,30 +369,35 @@ pub fn snare_drum() -> Instrument {
                     freq: 180.0,
                     phase: 0.0,
                 }),
+                base_freq: Some(180.0),
                 mods: Some(ModulationMatrix {
                     routes: vec![ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 6.0),
+                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 6.0),
                         ),
                         target: ModulationTarget::Amplitude,
+                        mode: ModulationMode::Multiply,
                         depth: 1.0,
                     }],
                 }),
                 fx: None,
             },
-            InstrumentLayer {
-                signal: SignalSource::Noise(Noise::new(NoiseType::White, 42)),
-                mods: Some(ModulationMatrix {
-                    routes: vec![ModulationRoute {
-                        source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 3.0),
-                        ),
-                        target: ModulationTarget::Amplitude,
-                        depth: 1.0,
-                    }],
-                }),
-                fx: None,
-            },
+            //InstrumentLayer {
+            //    volume: 0.25,
+            //    signal: SignalSource::Noise(Noise::new(NoiseType::White,
+            // 42)),    base_freq: None,
+            //    mods: Some(ModulationMatrix {
+            //        routes: vec![ModulationRoute {
+            //            source: ModulationSource::Envelope(
+            //                ParametricEnvelope::from_decay(1.0, 0.0, 0.3,
+            // 3.0),            ),
+            //            target: ModulationTarget::Amplitude,
+            //            mode: ModulationMode::Multiply,
+            //            depth: 1.0,
+            //        }],
+            //    }),
+            //    fx: None,
+            //},
         ],
         mods: None,
         fx: None,
@@ -381,13 +408,16 @@ pub fn hihat() -> Instrument {
     Instrument {
         is_unpitched: true,
         layers: vec![InstrumentLayer {
-            signal: SignalSource::Noise(Noise::new(NoiseType::White, 42)),
+            signal: SignalSource::Noise(Noise::new(NoiseType::White, 1337)),
+            base_freq: None,
+            volume: 1.0,
             mods: Some(ModulationMatrix {
                 routes: vec![ModulationRoute {
                     source: ModulationSource::Envelope(
-                        ParametricEnvelope::from_decay(1.0, 0.0, 2.0, 8.0),
+                        ParametricEnvelope::from_decay(1.0, 0.0, 0.15, 8.0),
                     ),
                     target: ModulationTarget::Amplitude,
+                    mode: ModulationMode::Multiply,
                     depth: 1.0,
                 }],
             }),

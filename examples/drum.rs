@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
         ],
         master_fx: EffectChain {
-            effects: vec![Box::new(Gain { amount: 0.8 })],
+            effects: vec![Box::new(Gain { amount: 1.0 })],
         },
     })
     .save_to(OUT_PATH);

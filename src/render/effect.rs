@@ -40,6 +40,13 @@ impl AudioEffect for Gain {
     }
 }
 
+impl Gain {
+    pub fn from_db(db: Float) -> Self {
+        let amount = 10.0_f64.powf(db / 20.0); // convert dB to linear
+        Self { amount }
+    }
+}
+
 /// Basic one-pole low-pass filter
 pub struct LowPass {
     pub cutoff_hz: Float,

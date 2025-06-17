@@ -39,6 +39,7 @@ impl AudioBuffer {
             }
         }
     }
+
     pub fn len(&self) -> usize {
         match self {
             AudioBuffer::Mono(v) => v.len(),
@@ -48,6 +49,33 @@ impl AudioBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn trim_end(&mut self, threshold: Float) {
+        fn is_silent(sample: Float, threshold: Float) -> bool {
+            sample.abs() <= threshold
+        }
+
+        match self {
+            AudioBuffer::Mono(buf) => {
+                while let Some(&last) = buf.last() {
+                    if is_silent(last, threshold) {
+                        buf.pop();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            AudioBuffer::Stereo(buf) => {
+                while let Some(&(l, r)) = buf.last() {
+                    if is_silent(l, threshold) && is_silent(r, threshold) {
+                        buf.pop();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     pub fn to_stereo(&self) -> AudioBuffer {
@@ -72,10 +100,38 @@ impl AudioBuffer {
         }
     }
 
+    pub fn max_amplitude(&self) -> Float {
+        match self {
+            AudioBuffer::Mono(buf) => {
+                buf.iter().copied().map(Float::abs).fold(0.0, Float::max)
+            }
+            AudioBuffer::Stereo(buf) => buf
+                .iter()
+                .map(|(l, r)| Float::max(l.abs(), r.abs()))
+                .fold(0.0, Float::max),
+        }
+    }
+
     pub fn resize(&mut self, new_len: usize) {
         match self {
             AudioBuffer::Mono(v) => v.resize(new_len, 0.0),
             AudioBuffer::Stereo(v) => v.resize(new_len, (0.0, 0.0)),
+        }
+    }
+
+    pub fn scale(&mut self, scale: Float) {
+        match self {
+            AudioBuffer::Mono(buf) => {
+                for s in buf.iter_mut() {
+                    *s *= scale;
+                }
+            }
+            AudioBuffer::Stereo(buf) => {
+                for (l, r) in buf.iter_mut() {
+                    *l *= scale;
+                    *r *= scale;
+                }
+            }
         }
     }
 
@@ -205,6 +261,9 @@ impl AudioProcessor {
         for fx in &mut self.master_fx.effects {
             fx.process(&mut mix, self.ctx.sample_rate);
         }
+
+        // TODO maybe make this optional
+        mix.trim_end(0.0);
 
         mix
     }
