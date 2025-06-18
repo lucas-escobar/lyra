@@ -203,12 +203,14 @@ impl AudioBuffer {
 
 // Track
 pub struct Track {
+    pub name: String,
     pub buffer: AudioBuffer,
     pub effects: Option<EffectChain>,
 }
 
 // Create track using part-instrument-fx
 pub struct TrackCreateInfo<'a> {
+    pub name: &'a str,
     pub part: &'a crate::compose::Part,
     pub instrument: &'a mut Instrument,
     pub fx: Option<EffectChain>,
@@ -218,13 +220,16 @@ pub struct TrackCreateInfo<'a> {
 impl Track {
     pub fn new(ci: TrackCreateInfo<'_>) -> Self {
         Self {
-            buffer: ci.instrument.render_part(ci.part, ci.ctx),
+            name: ci.name.to_string(),
+            buffer: ci.instrument.render_part(ci.part, ci.ctx).to_stereo(),
             effects: ci.fx,
         }
     }
 
-    pub fn process(&mut self, _sample_rate: u32) {
-        // TODO implement updated effect chain processing to track
+    pub fn process(&mut self, sample_rate: u32) {
+        if let Some(fx) = &mut self.effects {
+            fx.process(&mut self.buffer, sample_rate);
+        }
     }
 }
 
@@ -254,13 +259,46 @@ impl AudioProcessor {
         let mut mix = AudioBuffer::Stereo(vec![]);
 
         for track in &mut self.tracks {
+            let mut max = track.buffer.max_amplitude();
+            if max < -1.0 || max > 1.0 {
+                println!(
+                    "Warning: Track '{}' clips before local fx with max amp: {}",
+                    track.name, max
+                );
+            }
+
             // apply effects
             track.process(self.ctx.sample_rate);
+
+            max = track.buffer.max_amplitude();
+            if max < -1.0 || max > 1.0 {
+                println!(
+                    "Warning: Track '{}' clips after local fx with max amp: {}",
+                    track.name, max
+                );
+            }
+
             mix.add(&track.buffer);
+        }
+
+        let mut max = mix.max_amplitude();
+        if max < -1.0 || max > 1.0 {
+            println!(
+                "Warning: Master track clips before master fx with max amp: {}",
+                max
+            );
         }
 
         for fx in &mut self.master_fx.effects {
             fx.process(&mut mix, self.ctx.sample_rate);
+        }
+
+        max = mix.max_amplitude();
+        if max < -1.0 || max > 1.0 {
+            println!(
+                "Warning: Master track clips after master fx with max amp: {}",
+                max
+            );
         }
 
         // TODO maybe make this optional

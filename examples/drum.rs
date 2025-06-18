@@ -1,7 +1,7 @@
 use lyra::compose::{AttributesCreateInfo, Score, ScoreCreateInfo};
 use lyra::render::{
     hihat, kick_drum, snare_drum, AudioProcessor, AudioProcessorCreateInfo,
-    EffectChain, Gain, RenderContext, Track, TrackCreateInfo,
+    EffectChain, Gain, Pan, RenderContext, Track, TrackCreateInfo,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,21 +55,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx,
         tracks: vec![
             Track::new(TrackCreateInfo {
+                name: "Kick",
                 part: score.get_part("Kick").unwrap(),
                 instrument: &mut kick_drum(),
-                fx: None,
+                fx: Some(EffectChain {
+                    effects: vec![Box::new(Gain { amount: 1.0 })],
+                }),
                 ctx,
             }),
             Track::new(TrackCreateInfo {
+                name: "Snare",
                 part: score.get_part("Snare").unwrap(),
                 instrument: &mut snare_drum(),
-                fx: None,
+                fx: Some(EffectChain {
+                    effects: vec![
+                        Box::new(Gain { amount: 0.8 }),
+                        Box::new(Pan { position: 0.15 }),
+                    ],
+                }),
                 ctx,
             }),
             Track::new(TrackCreateInfo {
+                name: "High Hat",
                 part: score.get_part("High Hat").unwrap(),
                 instrument: &mut hihat(),
-                fx: None,
+                fx: Some(EffectChain {
+                    effects: vec![
+                        Box::new(Gain { amount: 0.25 }),
+                        Box::new(Pan { position: -0.3 }),
+                    ],
+                }),
                 ctx,
             }),
         ],

@@ -17,6 +17,32 @@ impl EffectChain {
     }
 }
 
+/// Pan effect: -1.0 (left) to +1.0 (right)
+pub struct Pan {
+    pub position: Float, // -1.0 to 1.0
+}
+
+impl AudioEffect for Pan {
+    fn process(&mut self, buffer: &mut AudioBuffer, _sr: u32) {
+        let position = self.position.clamp(-1.0, 1.0);
+        let left_gain = ((1.0 - position) * 0.5).sqrt();
+        let right_gain = ((1.0 + position) * 0.5).sqrt();
+
+        match buffer {
+            AudioBuffer::Mono(_) => {
+                panic!("Cannot pan a mono buffer");
+            }
+            AudioBuffer::Stereo(buf) => {
+                for (l, r) in buf {
+                    let mid = (*l + *r) * 0.5;
+                    *l = mid * left_gain;
+                    *r = mid * right_gain;
+                }
+            }
+        }
+    }
+}
+
 /// Simple gain adjustment
 pub struct Gain {
     pub amount: Float,

@@ -374,7 +374,7 @@ pub fn snare_drum() -> Instrument {
                 mods: Some(ModulationMatrix {
                     routes: vec![ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 0.5),
+                            ParametricEnvelope::from_decay(1.0, 0.0, 0.2, 0.5),
                         ),
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Scale,
@@ -390,7 +390,7 @@ pub fn snare_drum() -> Instrument {
                 mods: Some(ModulationMatrix {
                     routes: vec![ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 0.5),
+                            ParametricEnvelope::from_decay(1.0, 0.0, 0.2, 0.5),
                         ),
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Scale,
@@ -415,7 +415,7 @@ pub fn hihat() -> Instrument {
             mods: Some(ModulationMatrix {
                 routes: vec![ModulationRoute {
                     source: ModulationSource::Envelope(
-                        ParametricEnvelope::from_decay(1.0, 0.0, 0.15, 0.5),
+                        ParametricEnvelope::from_decay(1.0, 0.0, 0.1, 0.3),
                     ),
                     target: ModulationTarget::Amplitude,
                     mode: ModulationMode::Scale,
