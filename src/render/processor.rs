@@ -254,6 +254,7 @@ impl AudioProcessor {
         let mut mix = AudioBuffer::Stereo(vec![]);
 
         for track in &mut self.tracks {
+            // apply effects
             track.process(self.ctx.sample_rate);
             mix.add(&track.buffer);
         }

@@ -352,21 +352,36 @@ pub enum ModulationTarget {
 pub enum ModulationMode {
     Add,
     Multiply,
+    Replace,
+    Scale,
 }
 
 pub struct ModulationRoute {
     pub source: ModulationSource,
     pub target: ModulationTarget,
     pub mode: ModulationMode,
-    pub depth: Float, // -1.0..1.0
+    pub depth: Float, // 0.0..1.0
 }
 
 impl ModulationRoute {
     pub fn apply(&self, base: Float, t: Seconds) -> Float {
+        assert!(
+            self.depth >= 0.0 && self.depth <= 1.0,
+            "Modulation depths value out of range"
+        );
         let mod_val = self.source.value_at(t) * self.depth;
+
         match self.mode {
             ModulationMode::Add => base + mod_val,
-            ModulationMode::Multiply => base * (1.0 + mod_val),
+            ModulationMode::Multiply => {
+                assert!(mod_val >= -1.0, "Modulation value is too low");
+                base * (1.0 + mod_val)
+            }
+            ModulationMode::Replace => mod_val,
+            ModulationMode::Scale => {
+                assert!(mod_val >= 0.0, "Modulation value is too low");
+                base * mod_val
+            }
         }
     }
 }
@@ -463,10 +478,8 @@ impl ParametricEnvelope {
     }
 
     pub fn gate_on(&mut self, time: Float) {
-        if self.gate_on_time == None {
-            self.gate_on_time = Some(time);
-            self.gate_off_time = None;
-        }
+        self.gate_on_time = Some(time);
+        self.gate_off_time = None;
     }
 
     pub fn gate_off(&mut self, time: Float) {
@@ -492,10 +505,23 @@ impl ParametricEnvelope {
                         if t < cursor + duration {
                             let local_t = t - cursor;
                             let x = local_t / duration;
-                            let shaped = (1.0 - x).powf(*curve);
-                            return stage.end_level
-                                + (stage.start_level - stage.end_level)
+                            //let shaped = (1.0 - x).powf(*curve);
+                            //let shaped = x.powf(*curve);
+                            let shaped = if stage.start_level > stage.end_level
+                            {
+                                // Downward slope
+                                x.powf(*curve)
+                            } else {
+                                // Upward slope
+                                1.0 - (1.0 - x).powf(*curve)
+                            };
+                            println!("{}", shaped);
+                            return stage.start_level
+                                + (stage.end_level - stage.start_level)
                                     * shaped;
+                            //return stage.end_level
+                            //    + (stage.start_level - stage.end_level)
+                            //        * shaped;
                         }
                         cursor += duration;
                     }
@@ -534,9 +560,18 @@ impl ParametricEnvelope {
                     if release_t < cursor + duration {
                         let local_t = release_t - cursor;
                         let x = local_t / duration;
-                        let shaped = (1.0 - x).powf(*curve);
-                        return stage.end_level
-                            + (stage.start_level - stage.end_level) * shaped;
+                        //let shaped = (1.0 - x).powf(*curve);
+                        //let shaped = x.powf(*curve);
+                        let shaped = if stage.start_level > stage.end_level {
+                            // Downward slope
+                            x.powf(*curve)
+                        } else {
+                            // Upward slope
+                            1.0 - (1.0 - x).powf(*curve)
+                        };
+
+                        return stage.start_level
+                            + (stage.end_level - stage.start_level) * shaped;
                     }
                     cursor += duration;
                 }
