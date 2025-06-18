@@ -264,7 +264,7 @@ impl AudioProcessor {
         }
 
         // TODO maybe make this optional
-        mix.trim_end(0.0);
+        //mix.trim_end(0.0);
 
         mix
     }

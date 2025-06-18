@@ -59,11 +59,9 @@ impl Instrument {
         &mut self,
         ctx: &RenderContext,
         note_events: Vec<NoteEvent>,
-    ) -> AudioBuffer {
+        buf: &mut AudioBuffer,
+    ) {
         let sr = ctx.sample_rate;
-
-        let mut buf = AudioBuffer::Mono(vec![]);
-        buf.resize(60 * 10 * sr as usize);
 
         for event in note_events {
             let dur = (event.end - event.start) + self.max_release_time();
@@ -132,13 +130,6 @@ impl Instrument {
                         .unwrap_or(event.velocity);
 
                     let sample = layer.signal.sample(t) * amp * layer.volume;
-                    if i == 5 {
-                        println!("Sample: {}", sample);
-                        println!("Base Sample: {}", layer.signal.sample(t));
-                        println!("Velocity: {}", event.velocity);
-                        println!("Amp: {}", amp);
-                        println!("Volume: {}", layer.volume);
-                    }
                     layer_buf.set(i, sample);
                 }
 
@@ -154,10 +145,8 @@ impl Instrument {
 
         // Apply global FX if present
         if let Some(global_fx) = &mut self.fx {
-            global_fx.process(&mut buf, sr);
+            global_fx.process(buf, sr);
         }
-
-        buf
     }
 
     pub fn render_part(
@@ -254,7 +243,12 @@ impl Instrument {
             }
         }
 
-        self.process_note_events(ctx, note_events)
+        let mut buf = AudioBuffer::Mono(vec![]);
+        buf.resize(
+            (part.nominal_duration_seconds() * ctx.sample_rate as f64) as usize,
+        );
+        self.process_note_events(ctx, note_events, &mut buf);
+        buf
     }
 }
 

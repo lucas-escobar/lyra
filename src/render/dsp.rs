@@ -515,7 +515,6 @@ impl ParametricEnvelope {
                                 // Upward slope
                                 1.0 - (1.0 - x).powf(*curve)
                             };
-                            println!("{}", shaped);
                             return stage.start_level
                                 + (stage.end_level - stage.start_level)
                                     * shaped;

@@ -163,6 +163,63 @@ impl Part {
         }
     }
 
+    pub fn nominal_duration_seconds(&self) -> f64 {
+        fn ticks_to_secs(ticks: u32, divisions: u32, bpm: f64) -> f64 {
+            let quarter_note_duration = 60.0 / bpm;
+            (ticks as f64 / divisions as f64) * quarter_note_duration
+        }
+        let mut cursor = 0.0 as f64;
+        let mut max_cursor = 0.0 as f64;
+
+        let mut tempo_bpm = 120.0 as f64;
+        let mut divisions = 480 as u32; // Default assumption, often overridden in first measure
+
+        for measure in &self.measures {
+            if let Some(attrs) = &measure.attributes {
+                divisions = attrs.divisions;
+            }
+
+            for item in &measure.items {
+                match item {
+                    MeasureItem::Note(note) => {
+                        let dur_secs =
+                            ticks_to_secs(note.duration, divisions, tempo_bpm);
+                        if !note.is_chord {
+                            cursor += dur_secs;
+                            max_cursor = max_cursor.max(cursor);
+                        }
+                    }
+
+                    MeasureItem::Forward(fwd) => {
+                        let dur_secs =
+                            ticks_to_secs(fwd.duration, divisions, tempo_bpm);
+                        cursor += dur_secs;
+                        max_cursor = max_cursor.max(cursor);
+                    }
+
+                    MeasureItem::Backup(bak) => {
+                        let dur_secs =
+                            ticks_to_secs(bak.duration, divisions, tempo_bpm);
+                        cursor -= dur_secs;
+                        // Backup does not affect max_cursor
+                    }
+
+                    MeasureItem::Direction(dir) => {
+                        if let DirectionType::Metronome { per_minute, .. } =
+                            &dir.kind
+                        {
+                            tempo_bpm = *per_minute as f64;
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+        }
+
+        max_cursor
+    }
+
     /// For tied notes (and in the future, other types of notations) to be able
     /// to span across measures, a post-processing step is required to place
     /// the correct stop/continue tags on ties based on context that is not
@@ -317,8 +374,8 @@ impl Part {
     /// Add a MusicXML instrument (combined <midi-instrument> and
     /// <score-instrument>). This instrument is a suggestion to external  
     /// programs reading the XML file. The actual playback depends on the user
-    /// of the file. For lyra related audio rendering, use the instruments defined
-    /// in the render layer.
+    /// of the file. For lyra related audio rendering, use the instruments
+    /// defined in the render layer.
     ///
     /// Many options in both instrument elements are missing from this
     /// convenience function.
@@ -669,8 +726,8 @@ pub struct Repeat {
     direction: String, // "backward" or "forward"
 }
 
-/// Representation of <backup> element. Moves the time cursor back a set duration
-/// in ticks.
+/// Representation of <backup> element. Moves the time cursor back a set
+/// duration in ticks.
 pub struct Backup {
     pub duration: u32,
     footnote: Option<String>, // TODO implement
@@ -854,8 +911,8 @@ impl Measure {
             }
         }
 
-        // Support only 1 or 2 staves for now. I'm not sure if more than 2 staves
-        // in a part is common enough to change.
+        // Support only 1 or 2 staves for now. I'm not sure if more than 2
+        // staves in a part is common enough to change.
         if attr.staves == Some(2) {
             // The only multi-staff case supported is a treble + bass combo
             if let [Clef::Treble, Clef::Bass] = attr.clefs.as_slice() {
@@ -1316,8 +1373,8 @@ pub struct NoteCreateInfo {
 
     // TODO this is to handle the case of measure rests. Measure rests should
     // ignore the duration derived from note type and other elements, measure
-    // rests will calculate the exact duration in ticks based on time signature.
-    // Maybe there is a cleaner implementation
+    // rests will calculate the exact duration in ticks based on time
+    // signature. Maybe there is a cleaner implementation
     pub duration_override: Option<u32>,
 }
 
@@ -1617,32 +1674,32 @@ impl Pitch {
         if prefer_flat {
             match semitone_in_octave {
                 0 => Pitch { step: NaturalTone::C, octave, alter: None },
-                1 => Pitch { step: NaturalTone::D, octave, alter: Some(-1) }, // D♭
+                1 => Pitch { step: NaturalTone::D, octave, alter: Some(-1) }, /* D♭ */
                 2 => Pitch { step: NaturalTone::D, octave, alter: None },
-                3 => Pitch { step: NaturalTone::E, octave, alter: Some(-1) }, // E♭
+                3 => Pitch { step: NaturalTone::E, octave, alter: Some(-1) }, /* E♭ */
                 4 => Pitch { step: NaturalTone::E, octave, alter: None },
                 5 => Pitch { step: NaturalTone::F, octave, alter: None },
-                6 => Pitch { step: NaturalTone::G, octave, alter: Some(-1) }, // G♭
+                6 => Pitch { step: NaturalTone::G, octave, alter: Some(-1) }, /* G♭ */
                 7 => Pitch { step: NaturalTone::G, octave, alter: None },
-                8 => Pitch { step: NaturalTone::A, octave, alter: Some(-1) }, // A♭
+                8 => Pitch { step: NaturalTone::A, octave, alter: Some(-1) }, /* A♭ */
                 9 => Pitch { step: NaturalTone::A, octave, alter: None },
-                10 => Pitch { step: NaturalTone::B, octave, alter: Some(-1) }, // B♭
+                10 => Pitch { step: NaturalTone::B, octave, alter: Some(-1) }, /* B♭ */
                 11 => Pitch { step: NaturalTone::B, octave, alter: None },
                 _ => unreachable!("invalid semitone in octave"),
             }
         } else {
             match semitone_in_octave {
                 0 => Pitch { step: NaturalTone::C, octave, alter: None },
-                1 => Pitch { step: NaturalTone::C, octave, alter: Some(1) }, // C♯
+                1 => Pitch { step: NaturalTone::C, octave, alter: Some(1) }, /* C♯ */
                 2 => Pitch { step: NaturalTone::D, octave, alter: None },
-                3 => Pitch { step: NaturalTone::D, octave, alter: Some(1) }, // D♯
+                3 => Pitch { step: NaturalTone::D, octave, alter: Some(1) }, /* D♯ */
                 4 => Pitch { step: NaturalTone::E, octave, alter: None },
                 5 => Pitch { step: NaturalTone::F, octave, alter: None },
-                6 => Pitch { step: NaturalTone::F, octave, alter: Some(1) }, // F♯
+                6 => Pitch { step: NaturalTone::F, octave, alter: Some(1) }, /* F♯ */
                 7 => Pitch { step: NaturalTone::G, octave, alter: None },
-                8 => Pitch { step: NaturalTone::G, octave, alter: Some(1) }, // G♯
+                8 => Pitch { step: NaturalTone::G, octave, alter: Some(1) }, /* G♯ */
                 9 => Pitch { step: NaturalTone::A, octave, alter: None },
-                10 => Pitch { step: NaturalTone::A, octave, alter: Some(1) }, // A♯
+                10 => Pitch { step: NaturalTone::A, octave, alter: Some(1) }, /* A♯ */
                 11 => Pitch { step: NaturalTone::B, octave, alter: None },
                 _ => unreachable!("invalid semitone in octave"),
             }
