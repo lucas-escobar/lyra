@@ -313,44 +313,88 @@ pub struct NoteEvent {
 pub fn kick_drum() -> Instrument {
     Instrument {
         is_unpitched: true,
-        layers: vec![InstrumentLayer {
-            signal: SignalSource::Oscillator(Oscillator {
-                wave: Wave {
-                    source: Box::new(WaveShape::Sine),
-                    modifiers: None,
-                },
-                freq: 120.0,
-                phase: 0.0,
-            }),
-            volume: 1.0,
-            base_freq: Some(120.0),
-            mods: Some(ModulationMatrix {
-                routes: vec![
-                    ModulationRoute {
+        layers: vec![
+            InstrumentLayer {
+                signal: SignalSource::Oscillator(Oscillator {
+                    wave: Wave {
+                        source: Box::new(WaveShape::Sine),
+                        modifiers: None,
+                    },
+                    freq: 100.0,
+                    phase: 0.0,
+                }),
+                volume: 0.5,
+                base_freq: Some(80.0),
+                mods: Some(ModulationMatrix {
+                    routes: vec![
+                        ModulationRoute {
+                            source: ModulationSource::Envelope(
+                                ParametricEnvelope::from_ahdsr(
+                                    0.0005, 0.0, 0.082, 0.0, 0.0, 0.75,
+                                ),
+                            ),
+                            target: ModulationTarget::Amplitude,
+                            mode: ModulationMode::Scale,
+                            depth: 1.0,
+                        },
+                        ModulationRoute {
+                            source: ModulationSource::Envelope(
+                                ParametricEnvelope::from_ahdsr(
+                                    0.0005, 0.0, 0.082, 0.5, 0.0, 0.75,
+                                ),
+                            ),
+                            target: ModulationTarget::Pitch,
+                            mode: ModulationMode::Scale,
+                            depth: 1.0,
+                        },
+                    ],
+                }),
+                fx: None,
+            },
+            InstrumentLayer {
+                signal: SignalSource::Noise(Noise::new(NoiseType::Brown, 42)),
+                volume: 0.2,
+                mods: Some(ModulationMatrix {
+                    routes: vec![ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.0, 0.3, 0.5),
+                            ParametricEnvelope::from_ahdsr(
+                                0.0, 0.002, 0.012, 0.0, 0.0, 0.75,
+                            ),
                         ),
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Scale,
                         depth: 1.0,
+                    }],
+                }),
+                fx: None,
+                base_freq: None,
+            },
+            InstrumentLayer {
+                signal: SignalSource::Oscillator(Oscillator {
+                    wave: Wave {
+                        source: Box::new(WaveShape::Sine),
+                        modifiers: None,
                     },
-                    ModulationRoute {
-                        //source: ModulationSource::Envelope(
-                        //    ParametricEnvelope::from_decay(
-                        //        120.0, 50.0, 0.3, 5.0,
-                        //    ),
-                        //),
+                    freq: 40.0,
+                    phase: 0.0,
+                }),
+                base_freq: Some(40.0),
+                volume: 0.3,
+                mods: Some(ModulationMatrix {
+                    routes: vec![ModulationRoute {
                         source: ModulationSource::Envelope(
-                            ParametricEnvelope::from_decay(1.0, 0.33, 0.3, 0.5),
+                            ParametricEnvelope::from_ahdsr(
+                                0.01, 0.02, 0.2, 0.0, 0.0, 0.75,
+                            ),
                         ),
-                        target: ModulationTarget::Pitch,
+                        target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Scale,
                         depth: 1.0,
-                    },
-                ],
-            }),
-            fx: None,
-        }],
+                    }],
+                }),
+                fx: None,
+            },
+        ],
         mods: None,
         fx: None,
     }

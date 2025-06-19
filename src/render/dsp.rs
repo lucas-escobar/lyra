@@ -664,4 +664,74 @@ impl ParametricEnvelope {
             gate_off_time: None,
         }
     }
+
+    /// Convenience for standard AHDSR envelope
+    pub fn from_ahdsr(
+        attack: Float,
+        hold: Float,
+        decay: Float,
+        sustain: Float,
+        release: Float,
+        curve: Float,
+    ) -> Self {
+        let mut stages = vec![];
+
+        if attack > 0.0 {
+            stages.push(EnvelopeStage {
+                kind: StageKind::Ramp { duration: attack, curve },
+                start_level: 0.0,
+                end_level: 1.0,
+            });
+        } else {
+            // If attack is 0, start instantly at full level
+            stages.push(EnvelopeStage {
+                kind: StageKind::Step,
+                start_level: 1.0,
+                end_level: 1.0,
+            });
+        }
+
+        if hold > 0.0 {
+            stages.push(EnvelopeStage {
+                kind: StageKind::Hold { duration: hold },
+                start_level: 1.0,
+                end_level: 1.0,
+            });
+        }
+
+        if decay > 0.0 {
+            stages.push(EnvelopeStage {
+                kind: StageKind::Ramp { duration: decay, curve },
+                start_level: 1.0,
+                end_level: sustain,
+            });
+        } else {
+            stages.push(EnvelopeStage {
+                kind: StageKind::Step,
+                start_level: 1.0,
+                end_level: sustain,
+            });
+        }
+
+        stages.push(EnvelopeStage {
+            kind: StageKind::Sustain,
+            start_level: sustain,
+            end_level: sustain,
+        });
+
+        let release_stage = EnvelopeStage {
+            kind: StageKind::Ramp { duration: release, curve },
+            start_level: sustain,
+            end_level: 0.0,
+        };
+
+        Self {
+            stages: stages.clone(),
+            release_stages: vec![release_stage],
+            sustain_point: Some(stages.len() - 1),
+            loop_point: None,
+            gate_on_time: None,
+            gate_off_time: None,
+        }
+    }
 }
