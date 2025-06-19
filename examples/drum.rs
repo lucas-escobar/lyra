@@ -63,30 +63,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }),
                 ctx,
             }),
-            //Track::new(TrackCreateInfo {
-            //    name: "Snare",
-            //    part: score.get_part("Snare").unwrap(),
-            //    instrument: &mut snare_drum(),
-            //    fx: Some(EffectChain {
-            //        effects: vec![
-            //            Box::new(Gain { amount: 0.8 }),
-            //            Box::new(Pan { position: 0.15 }),
-            //        ],
-            //    }),
-            //    ctx,
-            //}),
-            //Track::new(TrackCreateInfo {
-            //    name: "High Hat",
-            //    part: score.get_part("High Hat").unwrap(),
-            //    instrument: &mut hihat(),
-            //    fx: Some(EffectChain {
-            //        effects: vec![
-            //            Box::new(Gain { amount: 0.25 }),
-            //            Box::new(Pan { position: -0.3 }),
-            //        ],
-            //    }),
-            //    ctx,
-            //}),
+            Track::new(TrackCreateInfo {
+                name: "Snare",
+                part: score.get_part("Snare").unwrap(),
+                instrument: &mut snare_drum(),
+                fx: Some(EffectChain {
+                    effects: vec![
+                        Box::new(Gain { amount: 0.8 }),
+                        Box::new(Pan { position: 0.15 }),
+                    ],
+                }),
+                ctx,
+            }),
+            Track::new(TrackCreateInfo {
+                name: "High Hat",
+                part: score.get_part("High Hat").unwrap(),
+                instrument: &mut hihat(),
+                fx: Some(EffectChain {
+                    effects: vec![
+                        Box::new(Gain { amount: 0.25 }),
+                        Box::new(Pan { position: -0.3 }),
+                    ],
+                }),
+                ctx,
+            }),
         ],
         master_fx: EffectChain {
             //effects: vec![Box::new(Gain { amount: 1.0 })],

@@ -310,11 +310,11 @@ pub struct NoteEvent {
 
 // CONCRETE INSTRUMENTS
 
+// Inspired by https://www.youtube.com/watch?v=ndG-6-vONNc
 pub fn kick_drum() -> Instrument {
     Instrument {
         is_unpitched: true,
         layers: vec![
-            // Beater head
             InstrumentLayer {
                 signal: SignalSource::Oscillator(Oscillator {
                     wave: Wave {
@@ -324,10 +324,11 @@ pub fn kick_drum() -> Instrument {
                     freq: 100.0,
                     phase: 0.0,
                 }),
-                volume: 0.5,
+                volume: 0.7,
                 base_freq: Some(80.0),
                 mods: Some(ModulationMatrix {
                     routes: vec![
+                        // Beater head
                         ModulationRoute {
                             source: ModulationSource::Envelope(
                                 ParametricEnvelope::from_ahdsr(
@@ -337,6 +338,7 @@ pub fn kick_drum() -> Instrument {
                             target: ModulationTarget::Amplitude,
                             mode: ModulationMode::Scale,
                             depth: 1.0,
+                            depth_mod: None,
                         },
                         ModulationRoute {
                             source: ModulationSource::Envelope(
@@ -347,7 +349,9 @@ pub fn kick_drum() -> Instrument {
                             target: ModulationTarget::Pitch,
                             mode: ModulationMode::Scale,
                             depth: 1.0,
+                            depth_mod: None,
                         },
+                        // Click from beater
                         ModulationRoute {
                             source: ModulationSource::Signal(
                                 SignalSource::Noise(Noise::new(
@@ -356,84 +360,90 @@ pub fn kick_drum() -> Instrument {
                                 )),
                             ),
                             target: ModulationTarget::Pitch,
-                            mode: ModulationMode::Scale,
-                            depth: 1.0,
+                            mode: ModulationMode::Multiply,
+                            depth: 0.02,
+                            depth_mod: Some(ModulationSource::Envelope(
+                                ParametricEnvelope::from_ahdsr(
+                                    0.0, 0.002, 0.005, 0.0, 0.0, 0.75,
+                                ),
+                            )),
                         },
                     ],
                 }),
                 fx: None,
             },
-            // Beater click
-            //InstrumentLayer {
-            //    signal: SignalSource::Noise(Noise::new(NoiseType::Brown,
-            // 42)),    volume: 0.2,
-            //    mods: Some(ModulationMatrix {
-            //        routes: vec![ModulationRoute {
-            //            source: ModulationSource::Envelope(
-            //                ParametricEnvelope::from_ahdsr(
-            //                    0.0, 0.002, 0.012, 0.0, 0.0, 0.75,
-            //                ),
-            //            ),
-            //            target: ModulationTarget::Amplitude,
-            //            mode: ModulationMode::Scale,
-            //            depth: 1.0,
-            //        }],
-            //    }),
-            //    fx: None,
-            //    base_freq: None,
-            //},
             // Reso head
-            //InstrumentLayer {
-            //    signal: SignalSource::Oscillator(Oscillator {
-            //        wave: Wave {
-            //            source: Box::new(WaveShape::Sine),
-            //            modifiers: None,
-            //        },
-            //        freq: 40.0,
-            //        phase: 0.0,
-            //    }),
-            //    base_freq: Some(40.0),
-            //    volume: 0.3,
-            //    mods: Some(ModulationMatrix {
-            //        routes: vec![ModulationRoute {
-            //            source: ModulationSource::Envelope(
-            //                ParametricEnvelope::from_ahdsr(
-            //                    0.01, 0.02, 0.2, 0.0, 0.0, 0.75,
-            //                ),
-            //            ),
-            //            target: ModulationTarget::Amplitude,
-            //            mode: ModulationMode::Scale,
-            //            depth: 1.0,
-            //        }],
-            //    }),
-            //    fx: None,
-            //},
+            InstrumentLayer {
+                signal: SignalSource::Oscillator(Oscillator {
+                    wave: Wave {
+                        source: Box::new(WaveShape::Sine),
+                        modifiers: None,
+                    },
+                    freq: 40.0,
+                    phase: 0.0,
+                }),
+                base_freq: Some(40.0),
+                volume: 0.3,
+                mods: Some(ModulationMatrix {
+                    routes: vec![ModulationRoute {
+                        source: ModulationSource::Envelope(
+                            ParametricEnvelope::from_ahdsr(
+                                0.01, 0.02, 0.2, 0.0, 0.0, 0.75,
+                            ),
+                        ),
+                        target: ModulationTarget::Amplitude,
+                        mode: ModulationMode::Scale,
+                        depth: 1.0,
+                        depth_mod: None,
+                    }],
+                }),
+                fx: None,
+            },
             // Far mic
-            //InstrumentLayer {
-            //    signal: SignalSource::Oscillator(Oscillator {
-            //        wave: Wave {
-            //            source: Box::new(WaveShape::Sine),
-            //            modifiers: None,
-            //        },
-            //        freq: 120.0,
-            //        phase: 0.0,
-            //    }),
-            //    base_freq: Some(120.0),
-            //    volume: 0.1,
-            //    mods: Some(ModulationMatrix {
-            //        routes: vec![ModulationRoute {
-            //            source: ModulationSource::Envelope(
-            //                ParametricEnvelope::from_ahdsr(
-            //                    0.01, 0.02, 0.2, 0.0, 0.0, 0.75,
-            //                ),
-            //            ),
-            //            target: ModulationTarget::Amplitude,
-            //            mode: ModulationMode::Scale,
-            //            depth: 1.0,
-            //        }],
-            //    }),
-            //    fx: None,
-            //},
+            InstrumentLayer {
+                signal: SignalSource::Oscillator(Oscillator {
+                    wave: Wave {
+                        source: Box::new(WaveShape::Sine),
+                        modifiers: None,
+                    },
+                    freq: 120.0,
+                    phase: 0.0,
+                }),
+                base_freq: Some(120.0),
+                volume: 0.025,
+                mods: Some(ModulationMatrix {
+                    routes: vec![
+                        ModulationRoute {
+                            source: ModulationSource::Envelope(
+                                ParametricEnvelope::from_ahdsr(
+                                    0.0005, 0.0, 0.3, 0.0, 0.0, 0.75,
+                                ),
+                            ),
+                            target: ModulationTarget::Amplitude,
+                            mode: ModulationMode::Scale,
+                            depth: 1.0,
+                            depth_mod: None,
+                        },
+                        ModulationRoute {
+                            source: ModulationSource::Signal(
+                                SignalSource::Noise(Noise::new(
+                                    NoiseType::Brown,
+                                    1337,
+                                )),
+                            ),
+                            target: ModulationTarget::Pitch,
+                            mode: ModulationMode::Multiply,
+                            depth: 0.2,
+                            depth_mod: Some(ModulationSource::Envelope(
+                                ParametricEnvelope::from_ahdsr(
+                                    0.0005, 0.0, 0.3, 0.0, 0.0, 0.75,
+                                ),
+                            )),
+                        },
+                    ],
+                }),
+                fx: None,
+            },
         ],
         mods: None,
         fx: None,
@@ -463,6 +473,7 @@ pub fn snare_drum() -> Instrument {
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Scale,
                         depth: 1.0,
+                        depth_mod: None,
                     }],
                 }),
                 fx: None,
@@ -479,6 +490,7 @@ pub fn snare_drum() -> Instrument {
                         target: ModulationTarget::Amplitude,
                         mode: ModulationMode::Scale,
                         depth: 1.0,
+                        depth_mod: None,
                     }],
                 }),
                 fx: None,
@@ -504,6 +516,7 @@ pub fn hihat() -> Instrument {
                     target: ModulationTarget::Amplitude,
                     mode: ModulationMode::Scale,
                     depth: 1.0,
+                    depth_mod: None,
                 }],
             }),
             fx: None,

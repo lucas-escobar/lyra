@@ -361,6 +361,9 @@ pub struct ModulationRoute {
     pub target: ModulationTarget,
     pub mode: ModulationMode,
     pub depth: Float, // 0.0..1.0
+
+    // TODO hard coded scaling modulation
+    pub depth_mod: Option<ModulationSource>,
 }
 
 impl ModulationRoute {
@@ -369,7 +372,12 @@ impl ModulationRoute {
             self.depth >= 0.0 && self.depth <= 1.0,
             "Modulation depths value out of range"
         );
-        let mod_val = self.source.value_at(t) * self.depth;
+
+        let mut depth = self.depth;
+        if let Some(dm) = &self.depth_mod {
+            depth *= dm.value_at(t)
+        }
+        let mod_val = self.source.value_at(t) * depth;
 
         match self.mode {
             ModulationMode::Add => base + mod_val,
@@ -412,6 +420,11 @@ impl ModulationMatrix {
     /// Turns all envelope gates in the matrix on
     pub fn gate_on(&mut self, t: Seconds) {
         for route in &mut self.routes {
+            if let Some(dm) = &mut route.depth_mod {
+                if let ModulationSource::Envelope(ref mut env) = dm {
+                    env.gate_on(t);
+                }
+            }
             if let ModulationSource::Envelope(ref mut env) = route.source {
                 env.gate_on(t);
             }
@@ -421,6 +434,11 @@ impl ModulationMatrix {
     /// Turns all envelope gates in the matrix off
     pub fn gate_off(&mut self, t: Seconds) {
         for route in &mut self.routes {
+            if let Some(dm) = &mut route.depth_mod {
+                if let ModulationSource::Envelope(ref mut env) = dm {
+                    env.gate_off(t);
+                }
+            }
             if let ModulationSource::Envelope(ref mut env) = route.source {
                 env.gate_off(t);
             }
