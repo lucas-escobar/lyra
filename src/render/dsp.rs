@@ -293,7 +293,7 @@ pub mod wave {
 pub enum ModulationSource {
     Constant(Float),
     Envelope(ParametricEnvelope),
-    LowFrequencyOscillator(signal::Oscillator),
+    Signal(signal::SignalSource),
 }
 
 impl ModulationSource {
@@ -301,7 +301,7 @@ impl ModulationSource {
         match self {
             Self::Constant(v) => *v,
             Self::Envelope(e) => e.value(t),
-            Self::LowFrequencyOscillator(osc) => osc.sample(t),
+            Self::Signal(s) => s.sample(t),
         }
     }
 }
