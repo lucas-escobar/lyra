@@ -1,5 +1,6 @@
 pub mod dsp;
 pub mod effect;
+pub mod engine;
 pub mod instrument;
 pub mod processor;
 mod types;
