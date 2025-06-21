@@ -7,6 +7,7 @@ use crate::render::EffectChain;
 /// Immutable configuration use for rendering
 pub struct RenderContext {
     pub sample_rate: u32,
+    pub block_size: usize,
 }
 
 #[derive(Clone)]

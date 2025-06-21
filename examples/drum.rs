@@ -6,7 +6,8 @@ use lyra::render::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const BPM: u32 = 90;
-    const SAMPLE_RATE: u32 = 44100;
+    const SAMPLE_RATE: u32 = 48000;
+    const BLOCK_SIZE: usize = 128;
     const OUT_PATH: &str = "output/example/drum.wav";
 
     let mut score = Score::new(ScoreCreateInfo {
@@ -50,7 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     // Create and process tracks
-    let ctx = &RenderContext { sample_rate: SAMPLE_RATE };
+    let ctx =
+        &RenderContext { sample_rate: SAMPLE_RATE, block_size: BLOCK_SIZE };
     AudioProcessor::new(AudioProcessorCreateInfo {
         ctx,
         tracks: vec![
