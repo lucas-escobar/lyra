@@ -1,4 +1,6 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use std::fs::File;
+use std::io::BufWriter;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
 
@@ -10,101 +12,124 @@ use crate::compose::Part;
 /// The top level of the rendering layer
 pub struct Engine {
     pub sample_rate: u32,
-    pub block_size: u32,
+    pub block_size: usize,
     pub node_graph: Graph,
 }
 
 impl Engine {
-    pub fn render(&mut self, output_path: &str) {
-        let graph = &self.node_graph;
-        let order = graph.topological_sort();
+    /// Offline render
+    pub fn render(&mut self) {
+        // Each output node will write to a file using its own buffered WAV
+        // writer
+        let mut writer_out_map: HashMap<NodeId, WavWriter<BufWriter<File>>> =
+            HashMap::new();
+        for node in &self.node_graph.nodes {
+            if let NodeKind::Output { target } = &node.kind {
+                let writer = WavWriter::create(
+                    target,
+                    WavSpec {
+                        channels: 2,
+                        sample_rate: self.sample_rate,
+                        bits_per_sample: 32,
+                        sample_format: SampleFormat::Float,
+                    },
+                )
+                .expect("Failed to create WavWriter");
+
+                writer_out_map.insert(node.id, writer);
+            }
+        }
+
+        // Each node may have an associated audio buffer. A map keeps track of
+        // these assignments.
+        let mut buf_map: HashMap<NodeId, AudioBuffer> = HashMap::new();
+
+        // TODO calculate total render time here
+
         let mut block_time = 0.0;
-
-        let block_size = self.block_size as usize;
-        let sample_rate = self.sample_rate as f64;
-        let block_duration = block_size as f64 / sample_rate;
-
-        // Global output buffer (may stream to WAV file in chunks instead)
-        let mut output_writer = WavWriter::create(
-            output_path,
-            WavSpec {
-                channels: 2,
-                sample_rate: self.sample_rate,
-                bits_per_sample: 32,
-                sample_format: SampleFormat::Float,
-            },
-        );
-
-        let mut buffer_map: HashMap<NodeId, AudioBuffer> = HashMap::new();
-
         while !self.finished_rendering(block_time) {
             // Clear buffer map for new block
-            buffer_map.clear();
+            buf_map.clear();
 
-            for node_id in order {
-                let node = graph.get_node(node_id);
-                let input_buffers = graph
+            for node_id in self.node_graph.topological_sort() {
+                let node = &self
+                    .node_graph
+                    .get_node(node_id)
+                    .expect("Node should be found in graph");
+
+                let bufs_in = &self
+                    .node_graph
                     .inputs(node_id)
                     .iter()
-                    .filter_map(|input_id| buffer_map.get(input_id))
+                    .filter_map(|input_id| buf_map.get(input_id))
                     .cloned()
                     .collect::<Vec<_>>();
 
-                // Get a clean output buffer from pool
-                let mut out_buffer = self.buffer_pool.get();
-                out_buffer.resize(block_size);
+                let mut out_buffer =
+                    AudioBuffer::Stereo(vec![(0.0, 0.0); self.block_size]);
 
                 // Process the node
                 match &node.kind {
                     NodeKind::Track { source, driver } => {
                         // Feed current clock time + block_size
-                        source.process_block(
-                            driver,
-                            block_time,
-                            block_duration,
-                            &mut out_buffer,
-                        );
                     }
                     NodeKind::Effect { effect } => {
-                        if let Some(input) = input_buffers.first() {
-                            out_buffer.copy_from(input);
-                            effect.process(&mut out_buffer, sample_rate as u32);
+                        // An effect will only use the first input found
+                        if let Some(input) = bufs_in.first() {
+                            out_buffer.clone_from(input);
+                            effect.process(&mut out_buffer, self.sample_rate);
                         }
                     }
                     NodeKind::Send { amount } => {
-                        if let Some(input) = input_buffers.first() {
-                            for i in 0..block_size {
-                                let sample = input.get(i) * *amount as f32;
-                                out_buffer.set(i, sample);
+                        // Send will only use the first input found
+                        if let Some(b) = bufs_in.first() {
+                            for i in 0..self.block_size {
+                                b.scale(amount);
+
+                                // TODO all processing is in stereo, make this
+                                // more explicit
+                                let sample = b.get_stereo(i);
+                                out_buffer.set_stereo(i, sample);
                             }
                         }
                     }
                     NodeKind::Bus => {
                         // Sum all inputs
-                        for input in &input_buffers {
-                            out_buffer.add(input);
+                        for b in bufs_in {
+                            out_buffer.add(b);
                         }
                     }
-                    NodeKind::Output => {
-                        for input in &input_buffers {
-                            out_buffer.add(input);
+                    NodeKind::Output { target } => {
+                        for b in bufs_in {
+                            out_buffer.add(b);
                         }
-                        output_writer.write_block(&out_buffer);
+                        if let AudioBuffer::Stereo(b) = &out_buffer {
+                            for &(left, right) in b {
+                                writer_out_map
+                                    .get(&node_id)
+                                    .unwrap()
+                                    .write_sample(left as f32)
+                                    .unwrap();
+                                writer_out_map
+                                    .get(&node_id)
+                                    .unwrap()
+                                    .write_sample(right as f32)
+                                    .unwrap();
+                            }
+                        } else {
+                            panic!("Output buffer must be stereo")
+                        }
                     }
                 }
-
-                buffer_map.insert(*node_id, out_buffer);
+                buf_map.insert(node_id, out_buffer);
             }
 
-            block_time += block_duration;
-
-            // Return all buffers to pool
-            for (_, buf) in buffer_map.drain() {
-                self.buffer_pool.release(buf);
-            }
+            block_time += self.block_size as f64 / self.sample_rate as f64;
         }
 
-        output_writer.finalize();
+        for (k, v) in writer_out_map {
+            v.finalize();
+        }
     }
 }
 
@@ -253,7 +278,7 @@ pub enum NodeKind {
     Effect { effect: Box<dyn AudioEffect> },
     Bus,
     Send { amount: f64 },
-    Output,
+    Output { target: String },
 }
 
 /// Component of a track that dictates when audio events occur

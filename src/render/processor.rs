@@ -17,6 +17,26 @@ pub enum AudioBuffer {
 }
 
 impl AudioBuffer {
+    pub fn get_mono(&self, index: usize) -> Float {
+        match self {
+            AudioBuffer::Mono(buf) => buf.get(index).copied().unwrap_or(0.0),
+            AudioBuffer::Stereo(_) => {
+                panic!("Tried to get_mono on a stereo buffer");
+            }
+        }
+    }
+
+    pub fn get_stereo(&self, index: usize) -> (Float, Float) {
+        match self {
+            AudioBuffer::Stereo(buf) => {
+                buf.get(index).copied().unwrap_or((0.0, 0.0))
+            }
+            AudioBuffer::Mono(_) => {
+                panic!("Tried to get_stereo on a mono buffer");
+            }
+        }
+    }
+
     pub fn set(&mut self, index: usize, value: Float) {
         match self {
             AudioBuffer::Mono(buf) => {
@@ -33,10 +53,10 @@ impl AudioBuffer {
         }
     }
 
-    pub fn set_stereo(&mut self, index: usize, left: Float, right: Float) {
+    pub fn set_stereo(&mut self, index: usize, value: (Float, Float)) {
         if let AudioBuffer::Stereo(buf) = self {
             if index < buf.len() {
-                buf[index] = (left, right);
+                buf[index] = value;
             }
         }
     }
@@ -120,7 +140,7 @@ impl AudioBuffer {
         }
     }
 
-    pub fn scale(&mut self, scale: Float) {
+    pub fn scale(&mut self, scale: &Float) {
         match self {
             AudioBuffer::Mono(buf) => {
                 for s in buf.iter_mut() {
