@@ -7,6 +7,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use super::effect::AudioEffect;
 use super::instrument::Instrument;
 use super::processor::AudioBuffer;
+use super::types::{Float, Seconds};
 use crate::compose::Part;
 
 /// The top level of the rendering layer
@@ -44,6 +45,24 @@ impl Engine {
         // these assignments.
         let mut buf_map: HashMap<NodeId, AudioBuffer> = HashMap::new();
 
+        let nodes_sorted = self.node_graph.topological_sort();
+
+        // Collect note events for all track nodes
+        let event_queue_map: HashMap<NodeId, Vec<NoteEvent>> = HashMap::new();
+        for node in &self.node_graph.nodes {
+            if let NodeKind::Track { source, driver } = &node.kind {
+                let queue = driver.collect_events(self.sample_rate);
+                event_queue_map.insert(node.id, queue);
+            }
+        }
+
+        // Initialize active note buffers
+        let mut active_note_map: HashMap<NodeId, Vec<NoteEvent>> =
+            HashMap::new();
+        for (k, v) in event_queue_map {
+            active_note_map.insert(k, vec![]);
+        }
+
         // TODO calculate total render time here
 
         let mut block_time = 0.0;
@@ -51,7 +70,7 @@ impl Engine {
             // Clear buffer map for new block
             buf_map.clear();
 
-            for node_id in self.node_graph.topological_sort() {
+            for node_id in nodes_sorted {
                 let node = &self
                     .node_graph
                     .get_node(node_id)
@@ -65,7 +84,7 @@ impl Engine {
                     .cloned()
                     .collect::<Vec<_>>();
 
-                let mut out_buffer =
+                let mut buf_out =
                     AudioBuffer::Stereo(vec![(0.0, 0.0); self.block_size]);
 
                 // Process the node
@@ -76,8 +95,8 @@ impl Engine {
                     NodeKind::Effect { effect } => {
                         // An effect will only use the first input found
                         if let Some(input) = bufs_in.first() {
-                            out_buffer.clone_from(input);
-                            effect.process(&mut out_buffer, self.sample_rate);
+                            buf_out.clone_from(input);
+                            effect.process(&mut buf_out, self.sample_rate);
                         }
                     }
                     NodeKind::Send { amount } => {
@@ -96,14 +115,14 @@ impl Engine {
                     NodeKind::Bus => {
                         // Sum all inputs
                         for b in bufs_in {
-                            out_buffer.add(b);
+                            buf_out.add(b);
                         }
                     }
                     NodeKind::Output { target } => {
                         for b in bufs_in {
-                            out_buffer.add(b);
+                            buf_out.add(b);
                         }
-                        if let AudioBuffer::Stereo(b) = &out_buffer {
+                        if let AudioBuffer::Stereo(b) = &buf_out {
                             for &(left, right) in b {
                                 writer_out_map
                                     .get(&node_id)
@@ -121,7 +140,7 @@ impl Engine {
                         }
                     }
                 }
-                buf_map.insert(node_id, out_buffer);
+                buf_map.insert(node_id, buf_out);
             }
 
             block_time += self.block_size as f64 / self.sample_rate as f64;
@@ -131,6 +150,13 @@ impl Engine {
             v.finalize();
         }
     }
+}
+
+pub struct NoteEvent {
+    pub freq: Option<Float>,
+    pub velocity: Float,
+    pub start: Seconds,
+    pub end: Seconds,
 }
 
 pub struct Clock {
