@@ -51,7 +51,7 @@ impl Engine {
         let event_queue_map: HashMap<NodeId, Vec<NoteEvent>> = HashMap::new();
         for node in &self.node_graph.nodes {
             if let NodeKind::Track { source, driver } = &node.kind {
-                let queue = driver.collect_events(self.sample_rate);
+                let queue = driver.collect_events();
                 event_queue_map.insert(node.id, queue);
             }
         }
@@ -63,10 +63,35 @@ impl Engine {
             active_note_map.insert(k, vec![]);
         }
 
-        // TODO calculate total render time here
+        // Calculate total render time
+        let mut max_note_end_time: f64 = 0.0;
+        for q in event_queue_map.values() {
+            for e in q {
+                max_note_end_time = max_note_end_time.max(e.end);
+            }
+        }
 
+        let mut max_release_time: f64 = 0.0;
+        for n in &self.node_graph.nodes {
+            if let NodeKind::Track { source, .. } = &n.kind {
+                max_release_time = max_release_time.max(source.release_time());
+            }
+        }
+
+        let mut max_effect_tail: f64 = 0.0;
+        // TODO implement topological tail propagation to calculate tail time
+        // from effect nodes
+        //for node in &self.node_graph.nodes {
+        //    if let NodeKind::Effect { effect } = &node.kind {
+        //        max_effect_tail = max_effect_tail.max(effect.tail_time());
+        //    }
+        //}
+
+        let max_render_time: f64 =
+            max_note_end_time + max_release_time + max_effect_tail;
         let mut block_time = 0.0;
-        while !self.finished_rendering(block_time) {
+
+        while block_time < max_render_time {
             // Clear buffer map for new block
             buf_map.clear();
 
@@ -310,9 +335,27 @@ pub enum NodeKind {
 /// Component of a track that dictates when audio events occur
 pub enum EventDriver {
     MusicXmlPart(Part),
+    // TODO impl generative or random drivers
+}
+
+impl EventDriver {
+    // Return a queue of note events sorted by start time
+    pub fn collect_events(&self) -> Vec<NoteEvent> {
+        match self {
+            Self::MusicXmlPart(p) => p.collect_events(),
+        }
+    }
 }
 
 /// Component of a track that defines how events are converted to samples
 pub enum SoundSource {
     Instrument(Instrument),
+}
+
+impl SoundSource {
+    pub fn release_time(&self) -> f64 {
+        match &self {
+            Self::Instrument(inst) => inst.max_release_time(),
+        }
+    }
 }

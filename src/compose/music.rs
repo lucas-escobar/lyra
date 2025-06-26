@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 /// Music theory related concepts. Based around the MusicXML spec.
 use crate::compose::xml;
+use crate::render::engine::NoteEvent;
 
 // TODO determine if i need to refer to xmlwriteable things generically
 //pub trait XmlWritable {
@@ -152,6 +155,54 @@ pub struct Part {
     effective_attributes: Option<Attributes>,
 }
 
+/// Mutable state used during the rendering process
+pub struct RenderState {
+    pub cursor: f64,       // seconds
+    pub saved_cursor: f64, //seconds
+    pub tempo_bpm: f64,
+    pub velocity: f64,
+    pub divisions: u32,
+    pub active_voices: Vec<NoteEvent>,
+    // Pitch => (start_time_beats, total_duration_beats)
+    pub ongoing_ties: HashMap<u8, (f64, f64)>,
+}
+
+impl Default for RenderState {
+    fn default() -> Self {
+        Self {
+            cursor: 0.0,
+            saved_cursor: 0.0,
+            tempo_bpm: 120.0,
+            velocity: 80.0 / 127.0, // mf
+            divisions: 480,
+            active_voices: vec![],
+            ongoing_ties: HashMap::new(),
+        }
+    }
+}
+
+impl RenderState {
+    pub fn seconds_per_beat(&self) -> f64 {
+        60.0 / self.tempo_bpm
+    }
+
+    /// Convert a duration in ticks to a duration in samples
+    pub fn ticks_to_samples(&self, duration: u32, sample_rate: u32) -> usize {
+        let dur_beats = duration as f64 / self.divisions as f64;
+        let dur_sec = dur_beats * self.seconds_per_beat();
+        (dur_sec * sample_rate as f64).ceil() as usize
+    }
+
+    /// Convert a duration in ticks to a duration in samples
+    pub fn ticks_to_secs(&self, duration: u32) -> f64 {
+        let dur_beats = duration as f64 / self.divisions as f64;
+        dur_beats * self.seconds_per_beat()
+    }
+
+    pub fn save_cursor(&mut self) {
+        self.saved_cursor = self.cursor;
+    }
+}
 impl Part {
     pub fn new(id: &str, name: &str) -> Self {
         Self {
@@ -159,8 +210,101 @@ impl Part {
             id: id.to_string(),
             name: name.to_string(),
             instrument: None,
+            // TODO move state to function level if possible
             effective_attributes: None,
         }
+    }
+
+    pub fn collect_events(&self) -> Vec<NoteEvent> {
+        let mut state = RenderState::default();
+
+        // MusicXML part will collect note events during parsing
+        let mut note_events: Vec<NoteEvent> = vec![];
+
+        // Flatten measures
+        // TODO delegate this to a part fn
+        let items: Vec<&MeasureItem> =
+            self.measures.iter().flat_map(|m| m.items.iter()).collect();
+
+        for item in &items {
+            match item {
+                MeasureItem::Note(note) => {
+                    if !note.is_chord {
+                        state.save_cursor();
+                    }
+
+                    let note_duration = state.ticks_to_secs(note.duration);
+
+                    if let Some(pitch) = &note.pitch {
+                        let mut event = NoteEvent {
+                            velocity: state.velocity,
+                            start: state.saved_cursor,
+                            end: state.saved_cursor + note_duration,
+                            freq: Some(pitch.to_frequency()),
+                        };
+
+                        match note.tie {
+                            Some(StartStop::Start) => {
+                                state.ongoing_ties.insert(
+                                    pitch.to_semitone(),
+                                    (state.saved_cursor, note_duration),
+                                );
+
+                                // do not push to event buffer, this is a tie
+                                // so the event is not over yet
+                                continue;
+                            }
+                            Some(StartStop::Stop) => {
+                                if let Some((prev_start, prev_duration)) = state
+                                    .ongoing_ties
+                                    .remove(&pitch.to_semitone())
+                                {
+                                    // Change note event timing based on tie
+                                    event.start = prev_start;
+                                    event.end = prev_start
+                                        + prev_duration
+                                        + note_duration;
+                                }
+                            }
+                            None => {}
+                        }
+                        note_events.push(event);
+                    } else if let Some(_) = &note.unpitched {
+                        note_events.push(NoteEvent {
+                            velocity: state.velocity,
+                            start: state.saved_cursor,
+                            end: state.saved_cursor + note_duration,
+                            freq: None,
+                        });
+                    }
+
+                    if !note.is_chord {
+                        state.cursor += note_duration;
+                    }
+                }
+
+                MeasureItem::Direction(dir) => match &dir.kind {
+                    DirectionType::Metronome { per_minute, .. } => {
+                        state.tempo_bpm = *per_minute as f64;
+                    }
+                    DirectionType::Dynamics(dynamics) => {
+                        state.velocity = dynamics.normalized_velocity();
+                    }
+                    _ => {}
+                },
+
+                MeasureItem::Forward(fwd) => {
+                    state.cursor += state.ticks_to_secs(fwd.duration);
+                }
+
+                MeasureItem::Backup(bak) => {
+                    state.cursor -= state.ticks_to_secs(bak.duration);
+                }
+
+                MeasureItem::Barline(_) => {}
+            }
+        }
+        note_events
     }
 
     pub fn nominal_duration_seconds(&self) -> f64 {

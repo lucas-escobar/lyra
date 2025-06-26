@@ -43,7 +43,7 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    fn max_release_time(&self) -> Float {
+    pub fn max_release_time(&self) -> Float {
         self.layers
             .iter()
             .flat_map(|l| l.mods.as_ref())
